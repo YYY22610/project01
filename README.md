@@ -96,12 +96,21 @@ travel-experiment-platform/
 
 ## 六、本地运行
 
+> ⚠️ **启动顺序**：数据库 → 后端 → 前端，三者缺一不可。若前端报 `POST /api/auth/register 500 (Internal Server Error)`，通常是**后端或数据库没在运行**（前端代理连不上 `http://127.0.0.1:8000`，vite 返回 500 / ECONNREFUSED），先按下面三步确认服务都已起来，这并非代码报错。
+
 ### 1. 数据库（PostgreSQL）
 
-PostgreSQL 不会随系统自启，每次需手动启动：
+PostgreSQL 不会随系统自启，每次需手动启动。
+
+**方式 A（推荐，需管理员权限）**：以管理员身份打开 PowerShell，启动系统服务：
 
 ```powershell
-# 启动 PostgreSQL（路径按本机实际安装调整）
+net start postgresql-x64-17
+```
+
+**方式 B（无管理员权限时）**：用 `pg_ctl` 直接以普通进程拉起：
+
+```powershell
 & "C:\Program Files\PostgreSQL\17\bin\pg_ctl.exe" -D "C:\Program Files\PostgreSQL\17\data" start
 ```
 
@@ -116,18 +125,21 @@ psql -U postgres -d travel_experiment -f database/seed.sql
 
 ### 2. 后端
 
+项目已预置 `backend/venv` 虚拟环境，依赖已安装，一般无需重建：
+
 ```powershell
 cd backend
-python -m venv venv
-.\venv\Scripts\activate          # Windows 激活虚拟环境
-pip install -r requirements.txt
-cp .env.example .env             # 复制并按需填写 .env
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+.\venv\Scripts\activate                                   # Windows 激活虚拟环境
+.\venv\Scripts\uvicorn.exe app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
+
+> 若依赖缺失或需重建：`python -m venv venv` → `pip install -r requirements.txt` → `cp .env.example .env`（按需填写）。
 
 后端启动后访问 `http://localhost:8000/docs` 可查看 Swagger API 文档。
 
 ### 3. 前端
+
+新开一个终端：
 
 ```powershell
 cd frontend
