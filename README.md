@@ -111,7 +111,7 @@ net start postgresql-x64-17
 **方式 B（无管理员权限时）**：用 `pg_ctl` 直接以普通进程拉起：
 
 ```powershell
-& "C:\Program Files\PostgreSQL\17\bin\pg_ctl.exe" -D "C:\Program Files\PostgreSQL\17\data" start
+& "D:\Develop\PostgreSQL\bin\pg_ctl.exe" -D "C:\Program Files\PostgreSQL\17\data" start
 ```
 
 首次运行需导入表结构与初始数据：

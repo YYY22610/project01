@@ -50,6 +50,14 @@ export default function Task() {
 
   const draftKey = user?.id ? `task_draft_${user.id}` : null
 
+  // 富文本编辑器相关
+  const editorRef = useRef<HTMLDivElement>(null)
+  const [saveTipShown, setSaveTipShown] = useState(false)
+
+  // 简单去除 HTML 标签，用于行为日志存储纯文本
+  const stripHtml = (s: string) =>
+    s.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
+
   useEffect(() => {
     fetchTaskConfig()
     fetchTaskStatus()
@@ -75,6 +83,13 @@ export default function Task() {
       // 草稿损坏则忽略
     }
   }, [draftKey])
+
+  // 切到「生成文档」标签页时，把已恢复的 HTML 内容写回编辑器（DOM 在切回时会重建）
+  useEffect(() => {
+    if (activeSubTab === 'doc' && editorRef.current && !editorRef.current.innerHTML && docContent) {
+      editorRef.current.innerHTML = docContent
+    }
+  }, [activeSubTab, docContent])
 
   useEffect(() => {
     if (!draftKey) return
@@ -116,9 +131,14 @@ export default function Task() {
   }
 
   const handleGenerateDoc = async () => {
-    logPlanEdit({ manualEditCount: editCountRef.current, contentSnippet: docContent.substring(0, 100) })
+    const html = editorRef.current?.innerHTML ?? ''
+    if (!html.trim() || html === '<br>' || html === '<div><br></div>') {
+      alert('请先输入行程规划内容再生成文档')
+      return
+    }
+    logPlanEdit({ manualEditCount: editCountRef.current, contentSnippet: stripHtml(html).substring(0, 100) })
     try {
-      const res = await documentApi.generate(planTitle, docContent)
+      const res = await documentApi.generate(planTitle, html, 'html')
       setDocGenerated(true)
       log({ action_type: 'document_save', action_target: res.data.file_name })
       alert(`文档已生成: ${res.data.file_name}`)
@@ -189,7 +209,7 @@ export default function Task() {
         task3_reminder: reminderSet,
         task4_email: emailSent,
       })
-      logPlanSubmit({ finalPlanText: docContent })
+      logPlanSubmit({ finalPlanText: stripHtml(docContent) })
       log({ action_type: 'task_submit' })
       if (draftKey) localStorage.removeItem(draftKey)
       navigate('/questionnaire')
@@ -290,6 +310,67 @@ export default function Task() {
     </div>
   )
 
+  // ===== 富文本编辑器工具函数 =====
+  const handleEditorInput = () => {
+    const html = editorRef.current?.innerHTML ?? ''
+    setDocContent(html)
+    editCountRef.current += 1
+  }
+
+  const execCmd = (cmd: string, val?: string) => {
+    document.execCommand(cmd, false, val || null)
+    editorRef.current?.focus()
+  }
+
+  const insertTable = () => {
+    const rows = window.prompt('行数:', '3')
+    if (!rows) return
+    const cols = window.prompt('列数:', '3')
+    if (!cols) return
+    let html = '<table><tbody>'
+    for (let i = 0; i < parseInt(rows, 10); i++) {
+      html += '<tr>'
+      for (let j = 0; j < parseInt(cols, 10); j++) html += '<td>&nbsp;</td>'
+      html += '</tr>'
+    }
+    html += '</tbody></table>'
+    execCmd('insertHTML', html)
+  }
+
+  // 浏览器端直接生成 .doc（所见即所得，Word/WPS 可打开），并提示已保存
+  const handleSaveLocal = () => {
+    const content = editorRef.current?.innerHTML.trim() ?? ''
+    if (!content || content === '<br>' || content === '<div><br></div>') {
+      alert('编辑器内容为空，请先输入内容再保存。')
+      return
+    }
+    const fullHtml =
+      "<html xmlns:o='urn:schemas-microsoft-com:office:office' " +
+      "xmlns:w='urn:schemas-microsoft-com:office:word' " +
+      "xmlns='http://www.w3.org/TR/REC-html40'>\n<head>\n" +
+      "<meta charset='utf-8'>\n<title>行程规划</title>\n<style>" +
+      "body{font-family:'Microsoft YaHei',sans-serif;max-width:800px;margin:40px auto;padding:20px;line-height:1.8;}" +
+      "table{border-collapse:collapse;width:100%;}td,th{border:1px solid #ccc;padding:8px;}" +
+      "</style>\n</head>\n<body>\n" + content + "\n</body>\n</html>"
+    const blob = new Blob([fullHtml], { type: 'application/msword;charset=utf-8' })
+    const a = document.createElement('a')
+    a.href = URL.createObjectURL(blob)
+    const now = new Date()
+    const ts =
+      now.getFullYear() +
+      String(now.getMonth() + 1).padStart(2, '0') +
+      String(now.getDate()).padStart(2, '0') + '_' +
+      String(now.getHours()).padStart(2, '0') +
+      String(now.getMinutes()).padStart(2, '0')
+    a.download = `行程规划_${ts}.doc`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(a.href)
+    setSaveTipShown(true)
+    setTimeout(() => setSaveTipShown(false), 2000)
+  }
+
   const renderDoc = () => (
     <div className="space-y-4">
       <div className="flex items-center gap-3">
@@ -298,19 +379,43 @@ export default function Task() {
         </span>
         <div>
           <h4 className="font-semibold text-gray-900">生成行程文档</h4>
-          <p className="text-xs text-gray-500">将规划内容导出为 Word 文档</p>
+          <p className="text-xs text-gray-500">在下方编辑器中整理行程，可导出为 Word 文档</p>
         </div>
       </div>
-      <textarea
-        value={docContent}
-        onChange={(e) => { setDocContent(e.target.value); editCountRef.current += 1 }}
-        className="w-full h-40 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm font-mono leading-relaxed"
-        placeholder={`在此输入行程规划内容...\n例如：\n# ${planTitle}\n## 第一天\n- 上午：西湖风景区\n- 下午：灵隐寺`}
-      />
+
+      {/* 富文本编辑器（仿 aitravel 内置文本编辑器） */}
+      <div>
+        <div className="editor-toolbar">
+          <button type="button" className="tb-btn" title="加粗" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('bold')}><b>B</b></button>
+          <button type="button" className="tb-btn" title="斜体" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('italic')}><i>I</i></button>
+          <button type="button" className="tb-btn" title="下划线" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('underline')}><u>U</u></button>
+          <div className="tb-sep" />
+          <button type="button" className="tb-btn" title="一级标题" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('formatBlock', '<h2>')}>H1</button>
+          <button type="button" className="tb-btn" title="二级标题" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('formatBlock', '<h3>')}>H2</button>
+          <button type="button" className="tb-btn" title="正文" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('formatBlock', '<p>')}>P</button>
+          <div className="tb-sep" />
+          <button type="button" className="tb-btn" title="无序列表" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('insertUnorderedList')}>&#8226;</button>
+          <button type="button" className="tb-btn" title="有序列表" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('insertOrderedList')}>1.</button>
+          <div className="tb-sep" />
+          <button type="button" className="tb-btn" title="插入表格" onMouseDown={(e) => e.preventDefault()} onClick={insertTable}>▦</button>
+          <button type="button" className="tb-btn" title="清除格式" onMouseDown={(e) => e.preventDefault()} onClick={() => execCmd('removeFormat')}>&#x2715;</button>
+          <button type="button" className="tb-btn tb-save" onMouseDown={(e) => e.preventDefault()} onClick={handleSaveLocal}>保存到本地</button>
+        </div>
+        <span className={`save-tip ${saveTipShown ? 'show' : ''}`}>已保存</span>
+        <div
+          ref={editorRef}
+          className="doc-editor"
+          contentEditable
+          suppressContentEditableWarning
+          data-placeholder="请在此处整理您的行程规划内容…"
+          onInput={handleEditorInput}
+        />
+      </div>
+
       <div className="flex gap-2">
         <button
           onClick={handleGenerateDoc}
-          disabled={!docContent.trim()}
+          disabled={!docContent.trim() || docContent === '<br>'}
           className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 disabled:opacity-50 text-sm font-medium"
         >
           生成 Word
@@ -427,6 +532,29 @@ export default function Task() {
 
   return (
     <div className="h-screen bg-[#f7f8fa] flex overflow-hidden">
+      <style>{`
+        .editor-toolbar { display: flex; flex-wrap: wrap; gap: 4px; padding: 6px 8px;
+          border: 1px solid #d0d4dc; border-bottom: none; background: #f9f9fb; border-radius: 3px 3px 0 0; }
+        .editor-toolbar .tb-btn { display: inline-flex; align-items: center; justify-content: center;
+          width: 30px; height: 28px; border: 1px solid #d0d4dc; background: #fff; border-radius: 3px;
+          cursor: pointer; font-size: 13px; color: #444; transition: all .15s; user-select: none; }
+        .editor-toolbar .tb-btn:hover { background: #e8f0fe; border-color: #2f7cf6; }
+        .editor-toolbar .tb-sep { width: 1px; height: 20px; background: #d0d4dc; margin: 4px 2px; }
+        .editor-toolbar .tb-save { width: auto; padding: 0 12px; background: #28a745; color: #fff;
+          border-color: #28a745; font-weight: 500; margin-left: auto; }
+        .editor-toolbar .tb-save:hover { background: #218838; border-color: #218838; }
+        .doc-editor { min-height: 340px; padding: 14px 16px; border: 1px solid #d0d4dc;
+          border-radius: 0 0 3px 3px; font-size: 14px; line-height: 1.8; outline: none;
+          overflow-y: auto; background: #fff; }
+        .doc-editor:focus { border-color: #2f7cf6; }
+        .doc-editor:empty::before { content: attr(data-placeholder); color: #b6bcc8; pointer-events: none; }
+        .doc-editor h1, .doc-editor h2, .doc-editor h3 { margin: 10px 0 6px; }
+        .doc-editor ul, .doc-editor ol { margin: 6px 0 6px 24px; }
+        .doc-editor table { border-collapse: collapse; width: 100%; margin: 8px 0; }
+        .doc-editor td, .doc-editor th { border: 1px solid #ccc; padding: 6px 10px; }
+        .save-tip { font-size: 12px; color: #28a745; margin-left: 8px; opacity: 0; transition: opacity .3s; }
+        .save-tip.show { opacity: 1; }
+      `}</style>
       {/* 左侧 AI 助手 —— 仅 SOA/MOA */}
       {showAI && (
         <aside className="w-[400px] lg:w-[440px] bg-white border-r border-gray-100 flex flex-col shrink-0">

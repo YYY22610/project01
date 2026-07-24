@@ -32,8 +32,8 @@ export const searchApi = {
 
 // Document
 export const documentApi = {
-  generate: (title: string, content: string) =>
-    api.post('/document/generate', { title, content }),
+  generate: (title: string, content: string, format: 'text' | 'html' = 'text') =>
+    api.post('/document/generate', { title, content, format }),
   /** 返回下载 URL 字符串（仅用于拼接，不直接触发下载） */
   downloadUrl: (fileName: string) =>
     `/api/document/download/${fileName}`,

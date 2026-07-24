@@ -29,7 +29,7 @@ async def generate_document(
     file_path = os.path.join(UPLOAD_DIR, file_name)
 
     try:
-        generate_docx(file_path, req.title, req.content)
+        generate_docx(file_path, req.title, req.content, req.format)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"文档生成失败: {str(e)}")
 

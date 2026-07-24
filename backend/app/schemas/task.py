@@ -59,6 +59,7 @@ class SearchResponse(BaseModel):
 class DocumentGenerateRequest(BaseModel):
     title: str = "杭州三日游行程规划"
     content: str
+    format: str = "text"  # 'text' | 'html'
 
 
 class DocumentResponse(BaseModel):
