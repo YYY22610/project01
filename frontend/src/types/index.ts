@@ -47,6 +47,7 @@ export interface SearchResult {
   title: string
   url: string
   snippet: string
+  source?: 'search_engine' | 'mock' | 'ai'
 }
 
 export interface ChatMessage {

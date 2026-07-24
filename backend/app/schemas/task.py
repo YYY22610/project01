@@ -49,6 +49,7 @@ class SearchResult(BaseModel):
     title: str
     url: str
     snippet: str
+    source: str = "search_engine"  # search_engine | mock | ai
 
 
 class SearchResponse(BaseModel):

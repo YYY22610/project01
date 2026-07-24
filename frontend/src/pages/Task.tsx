@@ -4,17 +4,18 @@ import { useUserStore } from '../stores/userStore'
 import { useBehaviorLogger } from '../hooks/useBehaviorLogger'
 import { useTimer } from '../hooks/useTimer'
 import { useAgentChat } from '../hooks/useAgentChat'
-import { searchApi, documentApi, reminderApi, emailApi } from '../services'
+import { searchApi, documentApi, reminderApi, emailApi, agentApi } from '../services'
 import type { SearchResult } from '../types'
 import {
   Search, Mail, Bell, FileText, Target, Sparkles, CheckCircle2, Clock,
   Layout, Plus, MapPin, Luggage, CalendarDays, ChevronRight, Trash2,
-  MoreHorizontal, Maximize2, Check
+  MoreHorizontal, Maximize2, Check, ExternalLink, Send
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import ChatWindow from '../components/ChatWindow'
 
 type SubTabKey = 'overview' | 'search' | 'doc' | 'reminder' | 'email'
+type SearchSubTab = 'engine' | 'ai'
 
 export default function Task() {
   const { user, taskConfig, taskStatus, fetchTaskConfig, fetchTaskStatus, submitTask } = useUserStore()
@@ -33,6 +34,11 @@ export default function Task() {
 
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
+  const [searchSubTab, setSearchSubTab] = useState<SearchSubTab>('engine')
+  const [aiInput, setAiInput] = useState('')
+  const [aiMessages, setAiMessages] = useState<{ role: 'user' | 'assistant'; content: string }[]>([])
+  const [aiLoading, setAiLoading] = useState(false)
+  const [aiError, setAiError] = useState<string | null>(null)
   const [docContent, setDocContent] = useState('')
   const [docGenerated, setDocGenerated] = useState(false)
   const [reminderDate, setReminderDate] = useState('')
@@ -127,6 +133,35 @@ export default function Task() {
       const latency = Math.round(performance.now() - startTs)
       logSearch({ query: searchQuery, latencyMs: latency, success: false })
       alert('搜索失败')
+    }
+  }
+
+  // AI 推荐：在搜索子任务内直接调用 Agent 获取景点推荐（不污染左侧聊天面板）
+  const handleAISend = async (text?: string) => {
+    const msg = (text ?? aiInput).trim()
+    if (!msg || aiLoading) return
+    setAiInput('')
+    setAiError(null)
+    setAiMessages((prev) => [...prev, { role: 'user', content: msg }, { role: 'assistant', content: '' }])
+    setAiLoading(true)
+    let acc = ''
+    try {
+      await agentApi.chat('soa', msg, (event, data) => {
+        if (event === 'content') {
+          acc += typeof data === 'string' ? data : JSON.stringify(data)
+          setAiMessages((prev) => {
+            const next = [...prev]
+            next[next.length - 1] = { role: 'assistant', content: acc }
+            return next
+          })
+        } else if (event === 'error') {
+          setAiError(typeof data === 'string' ? data : (data as any)?.error || '未知错误')
+        }
+      })
+    } catch (e: any) {
+      setAiError(e.message || 'AI 通信失败')
+    } finally {
+      setAiLoading(false)
     }
   }
 
@@ -278,35 +313,151 @@ export default function Task() {
           <p className="text-xs text-gray-500">输入关键词查找 {dest} 景点信息</p>
         </div>
       </div>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
-          className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-          placeholder="输入关键词，如：杭州西湖"
-        />
-        <button onClick={handleSearch} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 text-sm font-medium">
-          搜索
+
+      {/* 子 tab：搜索引擎 / AI 推荐（仿 aitravel 搜索引擎面板） */}
+      <div className="flex gap-1 border-b border-gray-200">
+        <button
+          onClick={() => setSearchSubTab('engine')}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
+            searchSubTab === 'engine'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Search size={15} /> 搜索引擎
+        </button>
+        <button
+          onClick={() => setSearchSubTab('ai')}
+          className={`flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition ${
+            searchSubTab === 'ai'
+              ? 'border-blue-600 text-blue-600'
+              : 'border-transparent text-gray-500 hover:text-gray-700'
+          }`}
+        >
+          <Sparkles size={15} /> AI 推荐
         </button>
       </div>
-      {searchResults.length > 0 ? (
-        <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-          {searchResults.map((r, i) => (
-            <div
-              key={i}
-              onClick={() => log({ action_type: 'search_result_click', action_target: r.title })}
-              className="p-4 bg-gray-50 rounded-xl hover:bg-blue-50 cursor-pointer transition"
+
+      {searchSubTab === 'engine' ? renderSearchEngine() : renderAIRecommend()}
+    </div>
+  )
+
+  // 搜索引擎：接入 DuckDuckGo + Bing 实时搜索
+  const renderSearchEngine = () => (
+    <div className="border border-gray-200 rounded-2xl overflow-hidden">
+      <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+        <span className="text-sm font-semibold text-gray-700">搜索引擎</span>
+        <span className="text-xs text-gray-400">DuckDuckGo · Bing</span>
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+            className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
+            placeholder="输入关键词，如：杭州西湖"
+          />
+          <button onClick={handleSearch} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 text-sm font-medium">
+            搜索
+          </button>
+        </div>
+        {searchResults.length > 0 ? (
+          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+            {searchResults.map((r, i) => (
+              <a
+                key={i}
+                href={r.url || undefined}
+                target={r.url ? '_blank' : undefined}
+                rel="noopener noreferrer"
+                onClick={() => log({ action_type: 'search_result_click', action_target: r.title })}
+                className="block p-4 bg-gray-50 rounded-xl hover:bg-blue-50 transition"
+              >
+                <div className="flex items-start justify-between gap-2">
+                  <h4 className="text-sm font-semibold text-blue-600">{r.title}</h4>
+                  <ExternalLink size={14} className="text-gray-400 shrink-0 mt-1" />
+                </div>
+                <p className="text-xs text-gray-500 mt-1 leading-relaxed">{r.snippet}</p>
+                {r.url && <p className="text-[11px] text-gray-400 mt-1 truncate">{r.url}</p>}
+                {r.source === 'mock' && (
+                  <span className="inline-block mt-1.5 text-[10px] px-1.5 py-0.5 bg-amber-50 text-amber-600 rounded">示例数据</span>
+                )}
+                {r.source === 'search_engine' && (
+                  <span className="inline-block mt-1.5 text-[10px] px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded">实时搜索</span>
+                )}
+              </a>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-gray-400">暂无结果，输入关键词后点击搜索</p>
+        )}
+      </div>
+    </div>
+  )
+
+  // AI 推荐：在搜索子任务内直接调用 Agent，不污染左侧聊天面板
+  const renderAIRecommend = () => (
+    <div className="border border-gray-200 rounded-2xl overflow-hidden">
+      <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center gap-2">
+        <Sparkles size={15} className="text-blue-600" />
+        <span className="text-sm font-semibold text-gray-700">AI 推荐景点</span>
+      </div>
+      <div className="p-4 space-y-3">
+        <div className="flex flex-wrap gap-2">
+          {[
+            '杭州有哪些必去的著名景点？',
+            '推荐一条杭州3日游路线',
+            '西湖周边有哪些景点和门票价格？',
+          ].map((q) => (
+            <button
+              key={q}
+              onClick={() => handleAISend(q)}
+              disabled={aiLoading}
+              className="text-xs px-3 py-1.5 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 disabled:opacity-50"
             >
-              <h4 className="text-sm font-semibold text-blue-600">{r.title}</h4>
-              <p className="text-xs text-gray-500 mt-1 leading-relaxed">{r.snippet}</p>
-            </div>
+              {q}
+            </button>
           ))}
         </div>
-      ) : (
-        <p className="text-sm text-gray-400">暂无结果</p>
-      )}
+
+        <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+          {aiMessages.length === 0 && (
+            <p className="text-sm text-gray-400">点击下方问题或输入需求，AI 助手将为你推荐景点。</p>
+          )}
+          {aiMessages.map((m, i) => (
+            <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+              <div className={`max-w-[85%] rounded-2xl px-3.5 py-2 text-sm leading-relaxed ${
+                m.role === 'user'
+                  ? 'bg-blue-600 text-white rounded-br-none'
+                  : 'bg-gray-100 text-gray-800 rounded-bl-none'
+              }`}>
+                {m.content || (aiLoading && i === aiMessages.length - 1 ? '正在生成…' : '')}
+              </div>
+            </div>
+          ))}
+          {aiError && <p className="text-xs text-red-500">{aiError}</p>}
+        </div>
+
+        <div className="flex items-center gap-2 bg-gray-100 rounded-full px-4 py-2">
+          <input
+            type="text"
+            value={aiInput}
+            onChange={(e) => setAiInput(e.target.value)}
+            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleAISend()}
+            disabled={aiLoading}
+            className="flex-1 bg-transparent border-0 focus:ring-0 text-sm text-gray-800 placeholder:text-gray-400 outline-none"
+            placeholder="向 AI 询问景点推荐…"
+          />
+          <button
+            onClick={() => handleAISend()}
+            disabled={aiLoading || !aiInput.trim()}
+            className="w-9 h-9 rounded-full bg-blue-600 text-white flex items-center justify-center hover:bg-blue-700 disabled:opacity-50 shrink-0"
+          >
+            <Send size={16} />
+          </button>
+        </div>
+      </div>
     </div>
   )
 
@@ -318,7 +469,7 @@ export default function Task() {
   }
 
   const execCmd = (cmd: string, val?: string) => {
-    document.execCommand(cmd, false, val || null)
+    document.execCommand(cmd, false, val || undefined)
     editorRef.current?.focus()
   }
 
