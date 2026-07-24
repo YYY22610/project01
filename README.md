@@ -17,8 +17,8 @@
 
 核心实验任务为**「杭州 N 日游行程规划」**（默认 N=3，预算 M=1000 元），包含四项子任务：
 
-1. **景点搜索** —— 检索目的地景点信息
-2. **文档生成** —— 将规划导出为 Word 文档
+1. **景点搜索** —— 检索目的地景点信息（DuckDuckGo + Bing 爬虫式实时搜索，详见第九节）
+2. **文档生成** —— 将规划导出为 Word 文档（内置富文本编辑器，保留排版，详见第九节）
 3. **提醒设置** —— 设定出行提醒
 4. **邮件发送** —— 将行程文档发送给指定收件人
 
@@ -35,7 +35,8 @@
 | 数据库 | PostgreSQL 17 |
 | 实时通信 | SSE（Server-Sent Events），用于 Agent 流式回复与执行状态推送 |
 | AI Agent | 基于 LLM API + Function Calling，含 `MockLLMClient` / `RealLLMClient` 工厂模式 |
-| 文档生成 | `python-docx` 程序化生成 `.docx` |
+| 文档生成 | `python-docx` 程序化生成 `.docx`（支持 HTML 富文本 → 带格式 docx） |
+| 景点搜索 | `httpx` + 标准库 `html.parser` 爬取 DuckDuckGo / Bing HTML 结果（爬虫式，无需 API key） |
 | 部署 | Docker（PostgreSQL）· 支持云服务器 / Vercel + Railway |
 
 ---
@@ -65,7 +66,7 @@ travel-experiment-platform/
 ├── backend/                  # FastAPI 后端
 │   ├── app/
 │   │   ├── routers/          # 路由（auth/task/search/document/email/agent/log/admin…）
-│   │   ├── services/         # 业务逻辑（auth/document/email/group/agent…）
+│   │   ├── services/         # 业务逻辑（auth/document/email/group/agent/search…）
 │   │   ├── models/           # ORM 模型（10 张表）
 │   │   ├── schemas/          # Pydantic Schema
 │   │   ├── deps.py           # 依赖注入（鉴权）
@@ -178,7 +179,7 @@ npm run dev
 |------|------|------|
 | 认证 | `POST /api/auth/register` · `/login` · `/consent` | 注册、登录、知情同意 |
 | 任务 | `GET /api/task/config` · `/status` · `POST /task/start` · `/submit` | 任务配置与提交 |
-| 搜索 | `POST /api/search` | 景点信息检索 |
+| 搜索 | `POST /api/search` | 景点信息检索（DuckDuckGo + Bing 爬虫兜底，返回 `source` 标记实时/示例） |
 | 文档 | `POST /api/document/generate` · `GET /api/document/download/{file}` | Word 生成与下载 |
 | 提醒 | `POST /api/reminder` | 设置提醒 |
 | 邮件 | `POST /api/email/send` | 发送行程邮件 |
@@ -188,7 +189,25 @@ npm run dev
 
 ---
 
-## 九、部署（可选）
+## 九、功能实现说明（近期更新）
+
+### 9.1 景点搜索（爬虫式实时搜索）
+
+- 后端 `app/services/search_service.py` 使用 `httpx.AsyncClient` 抓取 **DuckDuckGo HTML 搜索结果页**，并用标准库 `html.parser` 自写的 `_ResultExtractor` 状态机解析出 `title / url / snippet`（DuckDuckGo 的 `uddg=` 跳转链接会解码回真实 URL）。
+- 若 DuckDuckGo 无结果或请求异常，自动改用 **Bing HTML 结果页**（`li.b_algo > h2 > a` 抓标题、`div.b_caption > p` 抓摘要）兜底。
+- **无需任何搜索 API key**，免费零配置；缺点是依赖搜索引擎页面结构，若对方改版可能失效，且存在被限流 / 封 IP 风险。如需更稳定的官方接口，可启用 `.env` 中的 `BING_SEARCH_API_KEY` / `GOOGLE_SEARCH_API_KEY` 作为更高优先级兜底。
+- 当外网完全不可达或抓取失败时，路由层回退到本地 10 条杭州示例数据（结果带 `source: "mock"` 标记，前端显示「示例数据」标签）。
+- 前端「搜索景点」子任务提供 **搜索引擎 / AI 推荐** 两个子 tab：前者展示可点击跳转的真实搜索结果卡；后者内联调用 Agent（`agentApi.chat('soa', …)` 流式），不污染左侧聊天面板。
+
+### 9.2 文档生成（富文本编辑器 → Word）
+
+- 前端「生成文档」子任务改用内置 **`contenteditable` 富文本编辑器**（仿 `aitravel-main` 项目），支持加粗 / 斜体 / 下划线、H1 / H2 / 正文、有序 / 无序列表、插入表格、清除格式，以及「保存到本地」导出 `.doc`。
+- 提交时把编辑器 HTML 传给后端 `POST /api/document/generate`（携带 `format: "html"` 参数）。
+- 后端 `app/services/document_service.py` 的 `generate_docx` 用标准库 `html.parser` 将 HTML 转换为**带格式**的 `.docx`（标题层级 / 加粗 / 列表 / 表格均保留），不再丢失排版。
+
+---
+
+## 十、部署（可选）
 
 - **数据库**：使用 Docker Compose 或云托管 PostgreSQL。
 - **后端**：Gunicorn + Uvicorn Worker 部署于云服务器 / Railway。
@@ -197,7 +216,7 @@ npm run dev
 
 ---
 
-## 十、作者与致谢
+## 十一、作者与致谢
 
 - **作者**：[你的姓名]（[学校名称] [学院/专业] [学号]）
 - **指导教师**：[导师姓名]
@@ -208,6 +227,6 @@ npm run dev
 
 ---
 
-## 十一、许可证
+## 十二、许可证
 
 [此处填写许可证，如 MIT / 仅用于学术用途]
