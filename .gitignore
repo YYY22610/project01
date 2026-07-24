@@ -1,0 +1,45 @@
+# ===== Dependencies =====
+node_modules/
+.pnp
+.pnp.js
+
+# Python virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# ===== Build output =====
+dist/
+build/
+*.tsbuildinfo
+frontend/dist/
+
+# ===== Environment / Secrets =====
+.env
+.env.*
+!.env.example
+backend/.env
+backend/.env.*
+
+# ===== Generated uploads / runtime data =====
+uploads/
+backend/uploads/
+*.docx
+*.log
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ===== Editor / OS =====
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# ===== Misc =====
+tmp_*.log

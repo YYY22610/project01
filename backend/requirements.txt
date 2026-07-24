@@ -1,0 +1,38 @@
+# Web framework
+fastapi==0.115.6
+uvicorn[standard]==0.34.0
+
+# Database
+sqlalchemy[asyncio]==2.0.36
+asyncpg==0.30.0
+alembic==1.14.0
+
+# Auth
+python-jose[cryptography]==3.3.0
+# 直接调用 bcrypt（不依赖 passlib），避免 passlib 与 bcrypt 版本耦合导致注册/登录 500
+bcrypt==4.0.1
+python-multipart==0.0.20
+
+# Validation
+pydantic==2.10.4
+pydantic-settings==2.7.1
+
+# Utils
+python-dotenv==1.0.1
+email-validator==2.2.0
+
+# Document generation
+python-docx==1.1.2
+
+# Excel export
+openpyxl==3.1.5
+
+# HTTP client (for LLM API)
+httpx==0.28.1
+
+# CORS
+# (handled by fastapi middleware)
+
+# Testing
+pytest==8.3.4
+pytest-asyncio==0.25.0
