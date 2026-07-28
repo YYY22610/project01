@@ -296,13 +296,13 @@ export default function Task() {
 
   // 搜索引擎：接入 DuckDuckGo + Bing 实时搜索
   const renderSearchEngine = () => (
-    <div className="border border-gray-200 rounded-2xl overflow-hidden bg-white">
-      <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between">
+    <div className="border border-gray-200 rounded-2xl overflow-hidden bg-white flex flex-col h-full">
+      <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between shrink-0">
         <span className="text-sm font-semibold text-gray-700">搜索引擎</span>
         <span className="text-xs text-gray-400">DuckDuckGo · Bing</span>
       </div>
-      <div className="p-4 space-y-3">
-        <div className="flex gap-2">
+      <div className="p-4 space-y-3 flex-1 min-h-0 flex flex-col">
+        <div className="flex gap-2 shrink-0">
           <input
             type="text"
             value={searchQuery}
@@ -316,7 +316,7 @@ export default function Task() {
           </button>
         </div>
         {searchResults.length > 0 ? (
-          <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
+          <div className="space-y-2 flex-1 min-h-0 overflow-y-auto pr-1">
             {searchResults.map((r, i) => (
               <a
                 key={i}
@@ -342,7 +342,9 @@ export default function Task() {
             ))}
           </div>
         ) : (
-          <p className="text-sm text-gray-400">暂无结果，输入关键词后点击搜索</p>
+          <div className="flex-1 flex items-center justify-center">
+            <p className="text-sm text-gray-400">暂无结果，输入关键词后点击搜索</p>
+          </div>
         )}
       </div>
     </div>
@@ -642,7 +644,7 @@ export default function Task() {
               <ChatWindow agentId="soa" className="h-full" />
             )
           ) : (
-            <div className="h-full overflow-y-auto p-4">
+            <div className="h-full p-4 flex flex-col">
               {renderSearchEngine()}
             </div>
           )}
