@@ -249,9 +249,9 @@ export default function Task() {
   ]
 
   const renderOverview = () => (
-    <div className="space-y-6">
+    <div className="space-y-5">
       {/* 任务指令 */}
-      <div className="flex items-start gap-4">
+      <div className="flex items-start gap-4 bg-gray-50 rounded-xl p-4">
         <span className="w-10 h-10 rounded-xl bg-blue-600 text-white flex items-center justify-center shrink-0">
           <Target size={20} />
         </span>
@@ -271,7 +271,7 @@ export default function Task() {
         <div className="space-y-3">
           {taskProgress.map((t) => (
             <div key={t.key} className="flex items-center gap-3">
-              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs ${t.done ? 'bg-black text-white' : 'bg-gray-100 text-gray-400'}`}>
+              <div className={`w-8 h-8 rounded-full flex items-center justify-center text-xs ${t.done ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
                 {t.done ? <CheckCircle2 size={14} /> : <t.icon size={14} />}
               </div>
               <div className="flex-1">
@@ -298,7 +298,9 @@ export default function Task() {
   const renderSearchEngine = () => (
     <div className="border border-gray-200 rounded-2xl overflow-hidden bg-white flex flex-col h-full">
       <div className="px-4 py-3 bg-gray-50 border-b border-gray-200 flex items-center justify-between shrink-0">
-        <span className="text-sm font-semibold text-gray-700">搜索引擎</span>
+        <span className="flex items-center gap-1.5 text-sm font-semibold text-gray-700">
+          <Search size={15} className="text-blue-600" /> 搜索引擎
+        </span>
         <span className="text-xs text-gray-400">DuckDuckGo · Bing</span>
       </div>
       <div className="p-4 space-y-3 flex-1 min-h-0 flex flex-col">
@@ -324,7 +326,7 @@ export default function Task() {
                 target={r.url ? '_blank' : undefined}
                 rel="noopener noreferrer"
                 onClick={() => log({ action_type: 'search_result_click', action_target: r.title })}
-                className="block p-4 bg-gray-50 rounded-xl hover:bg-blue-50 transition"
+                className="block p-4 bg-gray-50 rounded-xl border border-transparent hover:bg-blue-50 hover:border-blue-200 hover:shadow-sm transition"
               >
                 <div className="flex items-start justify-between gap-2">
                   <h4 className="text-sm font-semibold text-blue-600">{r.title}</h4>
@@ -658,16 +660,18 @@ export default function Task() {
           <div>
             <h1 className="text-lg font-bold text-gray-900">行程详情</h1>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-sm text-gray-500">
-              <Clock size={14} />
-              <span className="font-mono font-semibold text-gray-900">{formatted}</span>
-              <span className="text-xs text-gray-400 ml-1">自动保存</span>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gray-50 rounded-full text-gray-500">
+              <Clock size={13} className="text-gray-400" />
+              <span className="font-mono font-semibold text-gray-900 text-sm">{formatted}</span>
             </div>
+            <span className="flex items-center gap-1 text-xs text-gray-400">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" /> 自动保存
+            </span>
             <button
               onClick={handleSubmit}
               disabled={!allDone || submitting}
-              className="px-5 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600 transition"
+              className="px-5 py-1.5 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600 transition shadow-sm"
             >
               {submitting ? '提交中...' : '提交'}
             </button>
@@ -683,8 +687,8 @@ export default function Task() {
                 onClick={() => setActiveSubTab(t.key)}
                 className={`shrink-0 flex items-center gap-1.5 px-4 py-2 rounded-full text-sm font-medium transition border ${
                   activeSubTab === t.key
-                    ? 'bg-black text-white border-black'
-                    : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                    ? 'bg-blue-600 text-white border-blue-600 shadow-sm'
+                    : 'bg-white text-gray-600 border-gray-200 hover:border-blue-300 hover:text-blue-600'
                 }`}
               >
                 {t.done && activeSubTab !== t.key ? <CheckCircle2 size={14} /> : <t.icon size={14} />}
