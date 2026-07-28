@@ -316,7 +316,7 @@ export default function Task() {
           </button>
         </div>
         {searchResults.length > 0 ? (
-          <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
+          <div className="space-y-2 max-h-[420px] overflow-y-auto pr-1">
             {searchResults.map((r, i) => (
               <a
                 key={i}
@@ -594,7 +594,7 @@ export default function Task() {
         .save-tip.show { opacity: 1; }
       `}</style>
       {/* 左侧边栏：AI助手 / 搜索引擎 */}
-      <aside className="w-[400px] lg:w-[440px] bg-white border-r border-gray-100 flex flex-col shrink-0">
+      <aside className="w-[480px] lg:w-[560px] bg-white border-r border-gray-100 flex flex-col shrink-0">
         <div className="h-14 border-b border-gray-100 flex items-center px-1 shrink-0">
           {showAI && (
             <button
