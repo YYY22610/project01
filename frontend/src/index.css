@@ -1,3 +1,6 @@
+/* 字体必须最先 import */
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,300..900;1,9..144,300..900&family=Plus+Jakarta+Sans:wght@400..800&family=Noto+Sans+SC:wght@400..700&family=Noto+Serif+SC:wght@400..700&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -6,11 +9,23 @@
   box-sizing: border-box;
 }
 
+html, body, #root {
+  min-height: 100%;
+}
+
 body {
   margin: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  font-family: 'Plus Jakarta Sans', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   -webkit-font-smoothing: antialiased;
-  background-color: #f9fafb;
+  -moz-osx-font-smoothing: grayscale;
+  background-color: #FAF6EE;
+  color: #1c1917;
+}
+
+/* 衬线字体类（光学尺寸特性） */
+.font-serif {
+  font-feature-settings: "ss01", "ss02";
+  font-optical-sizing: auto;
 }
 
 /* Custom scrollbar */
@@ -47,4 +62,17 @@ body {
   font-weight: 600;
   margin-top: 0.75rem;
   margin-bottom: 0.5rem;
+}
+
+/* 拖拽时禁止文本选中 */
+[draggable="true"] {
+  -webkit-user-drag: element;
+}
+
+/* 减弱动画偏好 — 无障碍 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

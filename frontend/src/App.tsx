@@ -10,6 +10,7 @@ import Demo from './pages/Demo'
 import Task from './pages/Task'
 import Questionnaire from './pages/Questionnaire'
 import Complete from './pages/Complete'
+import ItineraryBoard from './pages/ItineraryBoard'
 
 // Admin pages
 import AdminLogin from './pages/admin/AdminLogin'
@@ -79,6 +80,9 @@ function AppRoutes() {
       <Route path="/task" element={<RequireAuth><Task /></RequireAuth>} />
       <Route path="/questionnaire" element={<RequireAuth><Questionnaire /></RequireAuth>} />
       <Route path="/complete" element={<RequireAuth><Complete /></RequireAuth>} />
+
+      {/* 新版行程看板（独立预览页面 — 参考携程 AI 行程助手） */}
+      <Route path="/itinerary" element={<ItineraryBoard />} />
 
       {/* Admin routes */}
       <Route path="/admin/login" element={<AdminLogin />} />
