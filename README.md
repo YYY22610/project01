@@ -37,7 +37,7 @@
 | AI Agent | 基于 LLM API + Function Calling，含 `MockLLMClient` / `RealLLMClient` 工厂模式 |
 | 文档生成 | `python-docx` 程序化生成 `.docx`（支持 HTML 富文本 → 带格式 docx） |
 | 景点搜索 | `httpx` + 标准库 `html.parser` 爬取 DuckDuckGo / Bing HTML 结果（爬虫式，无需 API key） |
-| 部署 | Docker（PostgreSQL）· 支持云服务器 / Vercel + Railway |
+| 部署 | Docker 全栈编排（PostgreSQL + backend + frontend）· 支持云服务器 / Vercel + Railway |
 
 ---
 
@@ -154,21 +154,29 @@ npm run dev
 
 ## 七、环境变量（`.env`）
 
-| 变量 | 说明 | 示例 |
-|------|------|------|
+| 变量 | 说明 | 示例 / 默认值 |
+|------|------|--------------|
 | `DATABASE_URL` | 数据库连接串 | `postgresql+asyncpg://postgres:postgres@localhost:5432/travel_experiment` |
-| `SECRET_KEY` | JWT 签名密钥（生产环境务必更换） | `change-me` |
+| `SECRET_KEY` | JWT 签名密钥（生产环境务必更换） | 默认 `dev-secret-key-change-in-production` |
 | `ALGORITHM` | JWT 算法 | `HS256` |
 | `ACCESS_TOKEN_EXPIRE_MINUTES` | Token 有效期（分钟） | `1440` |
-| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理员账号 | `admin` / `change-me` |
+| `ADMIN_USERNAME` / `ADMIN_PASSWORD` | 管理员账号 | 默认 `admin` / `admin123` |
 | `LLM_API_KEY` | LLM 密钥（留空则使用 Mock 模式） | — |
 | `LLM_API_BASE_URL` | LLM 接口地址 | `https://api.openai.com/v1` |
 | `LLM_MODEL` | 模型名 | `gpt-4o-mini` |
-| `RESEND_API_KEY` | 邮件服务密钥（留空则 Mock） | — |
-| `SENDER_EMAIL` | 发件邮箱 | `experiment@example.com` |
-| `BING_SEARCH_API_KEY` / `GOOGLE_SEARCH_API_KEY` | 搜索 API 密钥 | — |
-| `CORS_ORIGINS` | 跨域白名单 | `http://localhost:5173` |
+| `EMAIL_BACKEND` | 发信后端：`smtp` / `resend` / `mock`；**留空则自动选择**（有 SMTP 配置→有 Resend key→mock） | 留空 |
+| `SMTP_HOST` | SMTP 服务器（推荐，QQ/163/腾讯企业邮/阿里云等国内均可） | `smtp.qq.com` |
+| `SMTP_PORT` | SMTP 端口 | `465`（SSL）/ `587`（STARTTLS） |
+| `SMTP_USER` | SMTP 登录账号（即发信邮箱） | `123456@qq.com` |
+| `SMTP_PASSWORD` | SMTP 授权码（**不是登录密码**） | — |
+| `SMTP_USE_SSL` / `SMTP_USE_TLS` | 加密方式（`465` 用 SSL，`587` 用 TLS，两者二选一） | `True` / `False` |
+| `SENDER_EMAIL` | 发件人（QQ 邮箱需与 `SMTP_USER` 一致） | `experiment@example.com` |
+| `RESEND_API_KEY` | Resend 邮件密钥（**备选**，需国外信用卡 + 验证域名） | — |
+| `BING_SEARCH_API_KEY` / `GOOGLE_SEARCH_API_KEY` | 搜索 API 密钥（可选，留空则走 DuckDuckGo/Bing 爬虫兜底） | — |
+| `CORS_ORIGINS` | 跨域白名单（多个用逗号分隔） | `http://localhost:5173,http://localhost:3000` |
 
+> **邮件发送说明**：本平台**优先使用 SMTP**（`SMTP_HOST/USER/PASSWORD` 配齐即生效，国内邮箱可直接用），`RESEND_API_KEY` 仅为国外备选；两者均未配置时自动 Mock（不真正发信，仅记录「模拟发送」）。`EMAIL_BACKEND` 可强制指定 `smtp` / `resend` / `mock`。
+>
 > ⚠️ `.env` 含有敏感信息，**已被 `.gitignore` 排除，切勿提交到版本库**。请仅提交 `.env.example`。
 
 ---
