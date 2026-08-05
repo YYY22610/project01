@@ -230,3 +230,66 @@ npm run dev
 ## 十二、许可证
 
 [此处填写许可证，如 MIT / 仅用于学术用途]
+
+---
+
+## 十三、CI/CD（GitHub Actions）
+
+仓库已内置一条轻量 CI 流水线：`.github/workflows/ci.yml`，在每次推送到 `main` 或发起 PR 时自动运行。
+
+### 流水线做什么
+
+| Job | 运行环境 | 检查内容 |
+|-----|----------|----------|
+| `frontend` | ubuntu-latest · Node 20 | `npm ci` 安装依赖 → `npm run build`（`tsc -b` 类型检查 + `vite build` 构建），并能把 `frontend/dist` 作为构建产物上传 |
+| `backend` | ubuntu-latest · Python 3.11 | `pip install -r backend/requirements.txt` → `python -m compileall` 编译检查 → `import app.main` 导入检查（验证应用可正常加载，无需数据库） |
+
+该配置刻意保持「稳绿」：不依赖外部服务与密钥，能在无数据库、无 LLM Key 的干净环境中通过，用于拦截**类型错误、构建失败、导入/语法错误**等常见回归。
+
+### 如何查看运行状态
+
+- 进入仓库页面 → **Actions** 标签，可看到每次提交的 CI 结果（绿色 ✓ / 红色 ✗）。
+- 流程文件的缓存（npm / pip）已开启，重复构建更快。
+
+### 如何开启「数据库端到端测试」（可选）
+
+既有的 `backend/test_e2e_smoke.py` 是一条覆盖六大功能点的端到端冒烟测试（强制 Mock LLM，使用 `httpx.ASGITransport` 进程内发请求，不需要端口）。要在 CI 中自动运行它，可在 `.github/workflows/ci.yml` 增加如下 job（需 PostgreSQL 服务并先建表）：
+
+```yaml
+  backend-test:
+    name: Backend e2e smoke
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: travel_experiment
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/travel_experiment
+      LLM_API_KEY: ""
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - run: pip install -r backend/requirements.txt
+      - name: Create tables
+        working-directory: backend
+        run: python -c "import asyncio, app.database; asyncio.run(app.database.init_db())"
+      - name: Run smoke test
+        working-directory: backend
+        run: pytest test_e2e_smoke.py -q
+```
+
+> 提示：本地也可直接运行该测试验证（需本机 PostgreSQL 已启动且 `travel_experiment` 库已建表）：
+> `cd backend && venv\Scripts\python.exe test_e2e_smoke.py`
