@@ -1,29 +1,64 @@
 import { useEffect, useState } from 'react'
 import { useAdminStore } from '../../stores/adminStore'
 import { adminApi } from '../../services/api'
+import {
+  CONSTRUCT_OPTIONS,
+  TYPE_OPTIONS,
+  constructLabel,
+  typeLabel,
+} from '../../constants/questionnaire'
+
+interface QuestionnaireItem {
+  id?: string
+  construct: string
+  text: string
+  type: string
+  options?: string[]
+  scale_level?: number
+  sort_order?: number
+  is_active?: boolean
+  applicable_groups?: string
+}
 
 export default function AdminQuestionnaire() {
   const { fetchQuestionnaireConfig, questionnaireItems } = useAdminStore()
-  const [editing, setEditing] = useState<any>(null)
+  const [editing, setEditing] = useState<QuestionnaireItem | null>(null)
   const [creating, setCreating] = useState(false)
 
   useEffect(() => {
     fetchQuestionnaireConfig()
   }, [])
 
-  const handleSave = async (item: any) => {
+  const toBackendPayload = (form: QuestionnaireItem) => {
+    const scaleLevel = form.type === 'likert7' ? 7 : 5
+    return {
+      construct: form.construct,
+      text: form.text,
+      type: form.type,
+      options: form.options && form.options.length > 0 ? form.options : null,
+      scale_level: scaleLevel,
+      sort_order: form.sort_order ?? 0,
+      is_active: form.is_active ?? true,
+      applicable_groups: form.applicable_groups ?? 'ALL',
+    }
+  }
+
+  const handleSave = async (form: QuestionnaireItem) => {
     try {
-      if (item.id) {
-        await adminApi.put(`/questionnaire-config/${item.id}`, item)
+      const payload = toBackendPayload(form)
+      if (form.id) {
+        await adminApi.put(`/questionnaire-config/${form.id}`, payload)
       } else {
-        await adminApi.post('/questionnaire-config', item)
+        await adminApi.post('/questionnaire-config', payload)
       }
       setEditing(null)
       setCreating(false)
       await fetchQuestionnaireConfig()
       alert('保存成功')
-    } catch {
-      alert('保存失败')
+    } catch (e: any) {
+      const detail = e.response?.data?.detail
+      console.error('保存题项失败', e.response?.data || e)
+      alert(detail ? `保存失败：${detail}` : '保存失败')
     }
   }
 
@@ -32,20 +67,10 @@ export default function AdminQuestionnaire() {
     try {
       await adminApi.delete(`/questionnaire-config/${id}`)
       await fetchQuestionnaireConfig()
-    } catch {
-      alert('删除失败')
+    } catch (e: any) {
+      const detail = e.response?.data?.detail
+      alert(detail ? `删除失败：${detail}` : '删除失败')
     }
-  }
-
-  const typeLabel = (t: string) => {
-    const map: Record<string, string> = {
-      likert5: '5级量表',
-      likert7: '7级量表',
-      single_choice: '单选',
-      multiple_choice: '多选',
-      text: '文本题',
-    }
-    return map[t] || t
   }
 
   return (
@@ -76,17 +101,17 @@ export default function AdminQuestionnaire() {
             {questionnaireItems.length === 0 ? (
               <tr><td colSpan={5} className="text-center py-12 text-gray-400">暂无题项</td></tr>
             ) : (
-              questionnaireItems.map((item: any, i: number) => (
+              questionnaireItems.map((item: QuestionnaireItem, i: number) => (
                 <tr key={item.id} className="hover:bg-gray-50">
                   <td className="px-4 py-3 text-sm text-gray-500">{i + 1}</td>
-                  <td className="px-4 py-3 text-sm text-gray-600">{item.construct || '-'}</td>
+                  <td className="px-4 py-3 text-sm text-gray-600">{constructLabel(item.construct) || '-'}</td>
                   <td className="px-4 py-3 text-sm text-gray-800">{item.text}</td>
                   <td className="px-4 py-3 text-center">
                     <span className="px-2 py-0.5 bg-blue-50 text-blue-600 rounded text-xs">{typeLabel(item.type)}</span>
                   </td>
                   <td className="px-4 py-3 text-center">
                     <button onClick={() => setEditing(item)} className="text-blue-600 hover:underline text-sm mr-3">编辑</button>
-                    <button onClick={() => handleDelete(item.id)} className="text-red-600 hover:underline text-sm">删除</button>
+                    <button onClick={() => item.id && handleDelete(item.id)} className="text-red-600 hover:underline text-sm">删除</button>
                   </td>
                 </tr>
               ))
@@ -107,20 +132,8 @@ export default function AdminQuestionnaire() {
   )
 }
 
-function QuestionnaireEditor({ item, onSave, onClose }: { item: any; onSave: (item: any) => void; onClose: () => void }) {
-  const [form, setForm] = useState({ ...item })
-
-  const constructs = [
-    '感知有用性', '感知易用性', '信任度', '满意度', '使用意愿', '系统质量'
-  ]
-
-  const types = [
-    { value: 'likert5', label: '5级量表 (1-5)' },
-    { value: 'likert7', label: '7级量表 (1-7)' },
-    { value: 'single_choice', label: '单选题' },
-    { value: 'multiple_choice', label: '多选题' },
-    { value: 'text', label: '文本题' },
-  ]
+function QuestionnaireEditor({ item, onSave, onClose }: { item: QuestionnaireItem; onSave: (item: QuestionnaireItem) => void; onClose: () => void }) {
+  const [form, setForm] = useState<QuestionnaireItem>({ ...item })
 
   const needsOptions = form.type === 'single_choice' || form.type === 'multiple_choice'
 
@@ -137,7 +150,7 @@ function QuestionnaireEditor({ item, onSave, onClose }: { item: any; onSave: (it
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
             >
               <option value="">请选择</option>
-              {constructs.map((c) => <option key={c} value={c}>{c}</option>)}
+              {CONSTRUCT_OPTIONS.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </div>
           <div>
@@ -157,7 +170,7 @@ function QuestionnaireEditor({ item, onSave, onClose }: { item: any; onSave: (it
               onChange={(e) => setForm({ ...form, type: e.target.value, options: [] })}
               className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
             >
-              {types.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+              {TYPE_OPTIONS.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
             </select>
           </div>
           {needsOptions && (

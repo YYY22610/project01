@@ -4,6 +4,7 @@ import { useUserStore } from '../stores/userStore'
 import { questionnaireApi } from '../services'
 import type { QuestionnaireItem } from '../types'
 import { useBehaviorLogger } from '../hooks/useBehaviorLogger'
+import { constructLabel } from '../constants/questionnaire'
 
 export default function Questionnaire() {
   const [items, setItems] = useState<QuestionnaireItem[]>([])
@@ -40,15 +41,6 @@ export default function Questionnaire() {
     }
   }
 
-  const constructLabels: Record<string, string> = {
-    trust: '感知信任',
-    autonomy: '感知自主性',
-    satisfaction: '满意度',
-    task_load: '任务负荷',
-    future_use: '未来使用意愿',
-    manipulation_check: '操纵检验',
-  }
-
   let currentConstruct = ''
 
   return (
@@ -66,8 +58,8 @@ export default function Questionnaire() {
               return (
                 <div key={item.id}>
                   {showHeader && (
-                    <h2 className="text-sm font-semibold text-blue-600 uppercase tracking-wide mb-3 pb-2 border-b border-blue-100">
-                      {constructLabels[item.construct] || item.construct}
+                    <h2 className="text-sm font-semibold text-blue-600 tracking-wide mb-3 pb-2 border-b border-blue-100">
+                      {constructLabel(item.construct)}
                     </h2>
                   )}
                   <div className="mb-4">

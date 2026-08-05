@@ -2,9 +2,10 @@ import { useEffect, useState } from 'react'
 import { useAdminStore } from '../../stores/adminStore'
 
 export default function AdminSettings() {
-  const { fetchConfigs, configs, updateConfig } = useAdminStore()
+  const { fetchConfigs, configs, updateConfig, exportData } = useAdminStore()
   const [form, setForm] = useState<Record<string, string>>({})
   const [saving, setSaving] = useState<string | null>(null)
+  const [exportGroup, setExportGroup] = useState('')
 
   useEffect(() => {
     fetchConfigs()
@@ -204,7 +205,18 @@ export default function AdminSettings() {
       <div className="bg-red-50 rounded-xl p-6 border border-red-200">
         <h2 className="text-lg font-semibold text-red-800 mb-2">危险操作</h2>
         <p className="text-sm text-red-600 mb-4">以下操作不可逆，请谨慎执行</p>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="text-sm font-medium text-gray-700">按组别筛选：</label>
+          <select
+            value={exportGroup}
+            onChange={(e) => setExportGroup(e.target.value)}
+            className="px-3 py-2 border border-gray-300 rounded-lg text-sm"
+          >
+            <option value="">全部组别</option>
+            <option value="H">H组</option>
+            <option value="SOA">SOA组</option>
+            <option value="MOA">MOA组</option>
+          </select>
           <button
             onClick={() => { if (confirm('确认重置所有实验数据？此操作不可逆！')) alert('请联系系统管理员执行') }}
             className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700"
@@ -212,10 +224,16 @@ export default function AdminSettings() {
             重置实验数据
           </button>
           <button
-            onClick={() => { if (confirm('确认导出全部数据为 Excel？')) window.open('/api/admin/export/all/xlsx') }}
+            onClick={() => exportData('xlsx', exportGroup || undefined)}
             className="px-4 py-2 bg-gray-600 text-white rounded-lg text-sm hover:bg-gray-700"
           >
             导出全部数据 (Excel)
+          </button>
+          <button
+            onClick={() => exportData('csv', exportGroup || undefined)}
+            className="px-4 py-2 bg-gray-500 text-white rounded-lg text-sm hover:bg-gray-600"
+          >
+            导出全部数据 (CSV)
           </button>
         </div>
       </div>

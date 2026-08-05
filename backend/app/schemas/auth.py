@@ -1,15 +1,22 @@
 """Pydantic schemas for authentication."""
+from typing import Optional
 from pydantic import BaseModel, EmailStr, Field
 
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=6, max_length=128)
+    # 密码可选：实验平台支持无密码注册（仅邮箱 + 人口统计），传入时仍按原逻辑哈希
+    password: Optional[str] = Field(default=None, max_length=128)
 
 
 class LoginRequest(BaseModel):
     email: EmailStr
     password: str
+
+
+class EmailLoginRequest(BaseModel):
+    """仅邮箱登录（实验平台允许已注册邮箱直接登录，无需密码）。"""
+    email: EmailStr
 
 
 class DemographicsRequest(BaseModel):

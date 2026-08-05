@@ -58,12 +58,31 @@ async def generate_document(
 
 @router.get("/download/{file_name}")
 async def download_document(file_name: str, user: User = Depends(get_current_user)):
-    """Download a generated document."""
+    """Download a generated document.
+
+    健壮性：若精确文件名不存在（如 AI 回复里被改写过的文件名、或陈旧链接），
+    自动回退到目录下最新的 .docx，避免用户点到 404。
+    """
     from fastapi.responses import FileResponse
 
     file_path = os.path.join(UPLOAD_DIR, file_name)
     if not os.path.exists(file_path):
-        raise HTTPException(status_code=404, detail="文件不存在")
+        # 回退：精确文件名找不到时，优先回退到「当前用户自己的」最新 .docx，
+        # 避免误发其他参与者的文档；仅当用户无匹配文件时才取全局最新。
+        all_docs = [f for f in os.listdir(UPLOAD_DIR) if f.lower().endswith(".docx")]
+        user_prefix = str(user.id)[:8]
+        own_docs = [f for f in all_docs if user_prefix in f]
+        pool = own_docs if own_docs else all_docs
+        candidates = sorted(
+            pool,
+            key=lambda f: os.path.getmtime(os.path.join(UPLOAD_DIR, f)),
+            reverse=True,
+        )
+        if candidates:
+            file_name = candidates[0]
+            file_path = os.path.join(UPLOAD_DIR, file_name)
+        else:
+            raise HTTPException(status_code=404, detail="文件不存在")
 
     return FileResponse(
         file_path,

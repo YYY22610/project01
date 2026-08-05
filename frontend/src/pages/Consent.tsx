@@ -4,14 +4,7 @@ import { useUserStore } from '../stores/userStore'
 
 export default function Consent() {
   const [agreed, setAgreed] = useState(false)
-  const [demographics, setDemographics] = useState({
-    age: '',
-    gender: '',
-    education: '',
-    tech_frequency: '',
-    ai_experience: '',
-  })
-  const { consent, updateDemographics, loading } = useUserStore()
+  const { consent, loading } = useUserStore()
   const navigate = useNavigate()
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -20,13 +13,6 @@ export default function Consent() {
 
     try {
       await consent()
-      await updateDemographics({
-        age: parseInt(demographics.age),
-        gender: demographics.gender,
-        education: demographics.education,
-        tech_frequency: demographics.tech_frequency,
-        ai_experience: demographics.ai_experience,
-      })
       navigate('/demo')
     } catch (e: any) {
       alert(e.response?.data?.detail || '操作失败')
@@ -58,83 +44,9 @@ export default function Consent() {
           <span className="text-sm text-gray-700">我已阅读并同意上述知情同意书内容</span>
         </label>
 
-        {agreed && (
-          <div className="border-t border-gray-200 pt-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-800 mb-4">基本信息采集</h2>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">年龄</label>
-                <input
-                  type="number"
-                  value={demographics.age}
-                  onChange={(e) => setDemographics({ ...demographics, age: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  placeholder="如 22"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">性别</label>
-                <select
-                  value={demographics.gender}
-                  onChange={(e) => setDemographics({ ...demographics, gender: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">请选择</option>
-                  <option value="male">男</option>
-                  <option value="female">女</option>
-                  <option value="other">其他</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">学历</label>
-                <select
-                  value={demographics.education}
-                  onChange={(e) => setDemographics({ ...demographics, education: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">请选择</option>
-                  <option value="high_school">高中及以下</option>
-                  <option value="college">大专</option>
-                  <option value="bachelor">本科</option>
-                  <option value="master">硕士</option>
-                  <option value="phd">博士</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">技术使用频率</label>
-                <select
-                  value={demographics.tech_frequency}
-                  onChange={(e) => setDemographics({ ...demographics, tech_frequency: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">请选择</option>
-                  <option value="rarely">很少使用</option>
-                  <option value="sometimes">偶尔使用</option>
-                  <option value="often">经常使用</option>
-                  <option value="daily">每天使用</option>
-                </select>
-              </div>
-              <div className="col-span-2">
-                <label className="block text-sm font-medium text-gray-700 mb-1">AI工具使用经验</label>
-                <select
-                  value={demographics.ai_experience}
-                  onChange={(e) => setDemographics({ ...demographics, ai_experience: e.target.value })}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                >
-                  <option value="">请选择</option>
-                  <option value="none">从未使用</option>
-                  <option value="basic">偶尔尝试</option>
-                  <option value="intermediate">有一定经验</option>
-                  <option value="advanced">熟练使用</option>
-                </select>
-              </div>
-            </div>
-          </div>
-        )}
-
         <button
           onClick={handleSubmit}
-          disabled={!agreed || loading || !demographics.age || !demographics.gender || !demographics.education || !demographics.tech_frequency || !demographics.ai_experience}
+          disabled={!agreed || loading}
           className="w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 disabled:opacity-50 transition"
         >
           {loading ? '提交中...' : '同意并继续'}

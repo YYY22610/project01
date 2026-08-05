@@ -1,13 +1,14 @@
 """Task router: task config, start task, submit task."""
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import get_current_user
 from app.models.user import User, UserStatus
 from app.models.task_submission import TaskSubmission
+from app.models.questionnaire import QuestionnaireResponse
 from app.models.system_config import SystemConfig
 from app.schemas.task import TaskConfigResponse, TaskStartResponse, TaskSubmitRequest, TaskSubmitResponse, DemoCompleteRequest
 from app.services.state_machine import transition_status
@@ -19,6 +20,23 @@ async def _get_config_value(db: AsyncSession, key: str, default: str = "") -> st
     result = await db.execute(select(SystemConfig).where(SystemConfig.key == key))
     config = result.scalar_one_or_none()
     return config.value if config else default
+
+
+@router.post("/reset")
+async def reset_flow(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    """重置实验流程：管理员修改分组后，参与者重新登录时需从头再来。
+
+    将状态重置回 consented（重新走演示→任务→问卷），并清空任务提交记录
+    与问卷回答，保证新分组下的实验数据干净。聊天记录由前端按会话隔离，
+    重新登录即全新会话，无需后端处理。
+    """
+    user.status = UserStatus.CONSENTED
+    user.task_start_time = None
+    user.task_end_time = None
+    await db.execute(delete(TaskSubmission).where(TaskSubmission.user_id == user.id))
+    await db.execute(delete(QuestionnaireResponse).where(QuestionnaireResponse.user_id == user.id))
+    await db.commit()
+    return {"status": "ok", "message": "实验流程已重置"}
 
 
 @router.get("/config", response_model=TaskConfigResponse)

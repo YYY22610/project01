@@ -29,7 +29,7 @@ class User(Base):
 
     id: Mapped[str] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     email: Mapped[str] = mapped_column(String(255), unique=True, index=True, nullable=False)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[str | None] = mapped_column(String(255), nullable=True)
 
     # Group assignment (single-blind: frontend never sees this directly)
     # "group" is a SQL reserved word in PostgreSQL, must quote the column name

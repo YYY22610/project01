@@ -4,6 +4,7 @@ import { useUserStore } from '../stores/userStore'
 import { useBehaviorLogger } from '../hooks/useBehaviorLogger'
 import { useTimer } from '../hooks/useTimer'
 import { useAgentChat } from '../hooks/useAgentChat'
+import { useChatStore } from '../stores/chatStore'
 import { searchApi, documentApi, reminderApi, emailApi } from '../services'
 import type { SearchResult } from '../types'
 import {
@@ -29,7 +30,20 @@ export default function Task() {
   const planTitle = `${dest}${days}日游行程规划`
 
   const [activeSubTab, setActiveSubTab] = useState<SubTabKey>('overview')
-  const [leftTab, setLeftTab] = useState<LeftTabKey>('search')
+  const [leftTab, setLeftTab] = useState<LeftTabKey>('ai')
+  // 完成"搜索景点"任务的两种触发方式：
+  //   1) 用户已与 AI 助手有过对话（chatStore.hasUsedAI + 直接检查 messages，双保险）
+  //   2) 用户在搜索引擎中执行了搜索（searchTriggered）
+  const hasUsedAI = useChatStore((s) => s.hasUsedAI)
+  const chatMessages = useChatStore((s) => s.messages)
+  const aiSearchTriggered = hasUsedAI || Object.values(chatMessages).some((arr) => arr && arr.length > 0)
+  const [searchTriggered, setSearchTriggered] = useState(false)
+
+  // 兜底：若本地已有历史聊天记录（升级前数据无 hasUsedAI 标记），挂载时回填标志，
+  // 避免"之前问过 AI、升级后刷新仍显示未完成"的情况
+  useEffect(() => {
+    useChatStore.getState().ensureAIUsedFlag()
+  }, [])
 
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<SearchResult[]>([])
@@ -44,8 +58,24 @@ export default function Task() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [submitting, setSubmitting] = useState(false)
 
-  const [showAI, setShowAI] = useState(false)
-  const [isMOA, setIsMOA] = useState(false)
+  // 从 JWT 同步初始化分组信息，避免首屏 showAI 为 false（尚未判定）时
+  // 把默认 leftTab 通过下方兜底 effect 强制改回「搜索引擎」
+  const getGroupFromToken = (): string | null => {
+    try {
+      const token = localStorage.getItem('access_token')
+      if (!token) return null
+      const payload = JSON.parse(atob(token.split('.')[1]))
+      return payload.group || null
+    } catch {
+      return null
+    }
+  }
+  const [showAI, setShowAI] = useState(() => {
+    const g = getGroupFromToken()
+    return g === 'SOA' || g === 'MOA'
+  })
+  const [isMOA, setIsMOA] = useState(() => getGroupFromToken() === 'MOA')
+  const [moaAgent, setMoaAgent] = useState<'moa_a' | 'moa_b'>('moa_a')
   useAgentChat('soa')
 
   const draftKey = user?.id ? `task_draft_${user.id}` : null
@@ -78,6 +108,7 @@ export default function Task() {
       if (typeof d.reminderSet === 'boolean') setReminderSet(d.reminderSet)
       if (typeof d.emailSent === 'boolean') setEmailSent(d.emailSent)
       if (typeof d.emailTo === 'string') setEmailTo(d.emailTo)
+      if (typeof d.searchTriggered === 'boolean') setSearchTriggered(d.searchTriggered)
       if (typeof d.activeSubTab === 'string') {
         // 旧版草稿可能有已移除的 'search'，统一回到总览
         const tab: SubTabKey = ['overview', 'doc', 'reminder', 'email'].includes(d.activeSubTab)
@@ -102,10 +133,10 @@ export default function Task() {
     const draft = {
       searchQuery, searchResults, docContent, docGenerated,
       reminderDate, reminderContent, reminderSet, emailSent, emailTo,
-      activeSubTab,
+      searchTriggered, activeSubTab,
     }
     localStorage.setItem(draftKey, JSON.stringify(draft))
-  }, [draftKey, searchQuery, searchResults, docContent, docGenerated, reminderDate, reminderContent, reminderSet, emailSent, emailTo, activeSubTab])
+  }, [draftKey, searchQuery, searchResults, docContent, docGenerated, reminderDate, reminderContent, reminderSet, emailSent, emailTo, searchTriggered, activeSubTab])
 
   // H 组无 AI 时，左侧只能停留在搜索引擎
   useEffect(() => {
@@ -132,6 +163,8 @@ export default function Task() {
       const res = await searchApi.search(searchQuery)
       const latency = Math.round(performance.now() - startTs)
       setSearchResults(res.data.results)
+      // 用户在搜索引擎执行了搜索 → 触发"搜索景点"任务完成
+      setSearchTriggered(true)
       logSearch({ query: searchQuery, resultsViewed: res.data.results.length, latencyMs: latency, success: true })
       log({ action_type: 'search_result_click', action_target: `${res.data.results.length} results` })
     } catch (e) {
@@ -161,13 +194,17 @@ export default function Task() {
 
   const handleSetReminder = async () => {
     if (!reminderDate) return
+    if (new Date(reminderDate) < new Date()) {
+      alert('提醒时间不能早于当前时间')
+      return
+    }
     log({ action_type: 'reminder_set', action_target: reminderDate })
     try {
       await reminderApi.set(reminderDate, reminderContent)
       setReminderSet(true)
       log({ action_type: 'reminder_set', action_target: reminderDate })
-    } catch (e) {
-      alert('设置提醒失败')
+    } catch (e: any) {
+      alert(e.response?.data?.detail || '设置提醒失败')
     }
   }
 
@@ -200,7 +237,7 @@ export default function Task() {
     setSubmitting(true)
     try {
       await submitTask({
-        task1_search: searchResults.length > 0,
+        task1_search: aiSearchTriggered || searchTriggered,
         task2_document: docGenerated,
         task3_reminder: reminderSet,
         task4_email: emailSent,
@@ -216,10 +253,10 @@ export default function Task() {
     }
   }
 
-  const allDone = searchResults.length > 0 && docGenerated && reminderSet && emailSent
+  const allDone = (aiSearchTriggered || searchTriggered) && docGenerated && reminderSet && emailSent
 
   const taskProgress = [
-    { key: 'search', label: '搜索景点', icon: Search, done: searchResults.length > 0, subTab: 'overview' as SubTabKey },
+    { key: 'search', label: '搜索景点', icon: Search, done: aiSearchTriggered || searchTriggered, subTab: 'overview' as SubTabKey },
     { key: 'doc', label: '生成文档', icon: FileText, done: docGenerated, subTab: 'doc' as SubTabKey },
     { key: 'reminder', label: '设置提醒', icon: Bell, done: reminderSet, subTab: 'reminder' as SubTabKey },
     { key: 'email', label: '发送邮件', icon: Mail, done: emailSent, subTab: 'email' as SubTabKey },
@@ -437,6 +474,7 @@ export default function Task() {
       <input
         type="datetime-local"
         value={reminderDate}
+        min={new Date(new Date().getTime() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
         onChange={(e) => setReminderDate(e.target.value)}
         className="w-full px-5 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
       />
@@ -617,10 +655,35 @@ export default function Task() {
         <div className="flex-1 overflow-hidden bg-white">
           {leftTab === 'ai' && showAI ? (
             isMOA ? (
-              <div className="h-full overflow-y-auto p-3 space-y-3">
-                <MOAAgentPanel agentId="moa_a" title="信息检索专员" color="blue" />
-                <MOAAgentPanel agentId="moa_b" title="行程编排专员" color="green" />
-                <MOAAgentPanel agentId="moa_c" title="事务处理专员" color="purple" />
+              <div className="h-full flex flex-col">
+                {/* 顶部双 AI 助理切换 */}
+                <div className="flex shrink-0 border-b border-gray-100 bg-white">
+                  {([
+                    { id: 'moa_a', title: '信息检索专员', color: 'blue' },
+                    { id: 'moa_b', title: '行程编排专员', color: 'green' },
+                  ] as const).map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setMoaAgent(t.id)}
+                      className={`relative flex-1 h-12 text-sm font-medium transition ${
+                        moaAgent === t.id
+                          ? 'text-blue-600 bg-blue-50'
+                          : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <span className="flex items-center justify-center gap-1.5">
+                        <Sparkles size={14} /> {t.title}
+                      </span>
+                      {moaAgent === t.id && (
+                        <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
+                      )}
+                    </button>
+                  ))}
+                </div>
+                {/* 当前助理窗口：高度拉满剩余页面 */}
+                <div className="flex-1 min-h-0">
+                  <ChatWindow agentId={moaAgent} className="h-full" />
+                </div>
               </div>
             ) : (
               <ChatWindow agentId="soa" className="h-full" />
@@ -637,9 +700,16 @@ export default function Task() {
       <main className="flex-1 flex flex-col overflow-hidden bg-[#f4f8fd]">
         {/* 顶部标题栏 */}
         <header className="h-[72px] px-6 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-2">
-            <span className="w-1.5 h-6 rounded bg-[#2577e3]" />
-            <h1 className="text-2xl font-bold text-gray-900">行程详情</h1>
+          <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2">
+              <span className="w-1.5 h-6 rounded bg-[#2577e3]" />
+              <h1 className="text-2xl font-bold text-gray-900">行程详情</h1>
+            </div>
+            {user?.email && (
+              <span className="text-xs text-gray-400 ml-3.5">
+                当前账号：<span className="font-mono text-gray-500">{user.email}</span>
+              </span>
+            )}
           </div>
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1.5 px-5 py-2.5 bg-gray-50 rounded-full text-gray-500">
@@ -705,20 +775,6 @@ export default function Task() {
           </div>
         </div>
       </main>
-    </div>
-  )
-}
-
-function MOAAgentPanel({ agentId, title, color }: { agentId: string; title: string; color: string }) {
-  const colorMap: Record<string, string> = {
-    blue: 'bg-blue-600', green: 'bg-emerald-600', purple: 'bg-purple-600',
-  }
-  return (
-    <div className="bg-white rounded-2xl border border-gray-100 overflow-hidden shadow-sm">
-      <div className={`${colorMap[color]} text-white px-4 py-2 flex items-center gap-2`}>
-        <Sparkles size={14} /> <h3 className="text-sm font-semibold">{title}</h3>
-      </div>
-      <ChatWindow agentId={agentId} className="h-[260px]" />
     </div>
   )
 }

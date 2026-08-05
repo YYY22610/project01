@@ -83,6 +83,10 @@ class AdminScoreRequest(BaseModel):
     fame_score: Optional[int] = Field(default=None, ge=0, le=10)
     season_score: Optional[int] = Field(default=None, ge=0, le=10)
     eco_score: Optional[int] = Field(default=None, ge=-5, le=3)
+    # 综合完成质量评分（研究员主观评价，1-10 分制，需求5.2）
+    quality_score: Optional[int] = Field(default=None, ge=0, le=10)
+    # 提醒正确性（研究员人工判定，需求5.1.2 选C）
+    reminder_correct: Optional[bool] = None
     notes: Optional[str] = None
 
 

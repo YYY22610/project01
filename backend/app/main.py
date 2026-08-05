@@ -1,11 +1,15 @@
 """FastAPI application entry point."""
+import asyncio
 import contextlib
+import logging
 import traceback
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from app.config import settings
+
+logger = logging.getLogger(__name__)
 
 
 @contextlib.asynccontextmanager
@@ -19,9 +23,28 @@ async def lifespan(app: FastAPI):
     from app.services.seed_service import seed_initial_data
     await seed_initial_data()
 
+    # 启动定时提醒调度器：每 30 秒扫描到期提醒并发送邮件到用户注册邮箱
+    from app.services.reminder_service import send_due_reminders
+
+    async def _reminder_scheduler_loop():
+        while True:
+            try:
+                await send_due_reminders()
+            except Exception:
+                logger.exception("定时提醒调度异常")
+            await asyncio.sleep(30)
+
+    reminder_task = asyncio.create_task(_reminder_scheduler_loop())
+    logger.info("定时提醒调度器已启动（每 30 秒扫描一次）")
+
     yield
 
     # Shutdown
+    reminder_task.cancel()
+    try:
+        await reminder_task
+    except asyncio.CancelledError:
+        pass
     from app.database import engine
     await engine.dispose()
 

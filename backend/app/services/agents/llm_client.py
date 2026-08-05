@@ -5,6 +5,7 @@ Otherwise, uses MockLLMClient that simulates responses based on keywords.
 """
 import json
 import asyncio
+import httpx
 from typing import AsyncGenerator
 from app.config import settings
 
@@ -83,9 +84,10 @@ class MockLLMClient:
 class RealLLMClient:
     """Real LLM client using OpenAI-compatible API."""
 
-    async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
-        import httpx
+    # 真实 Qwen/DashScope 偶发读取超时（httpx.ReadTimeout），重试可消化大部分瞬断。
+    _TRANSIENT = (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError, httpx.RemoteProtocolError)
 
+    async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         headers = {
             "Authorization": f"Bearer {settings.LLM_API_KEY}",
             "Content-Type": "application/json",
@@ -98,19 +100,40 @@ class RealLLMClient:
         if tools:
             payload["tools"] = [{"type": "function", "function": t} for t in tools]
 
-        async with httpx.AsyncClient() as client:
-            response = await client.post(
-                f"{settings.LLM_API_BASE_URL}/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60,
-            )
-            response.raise_for_status()
-            data = response.json()
+        last_err: Exception | None = None
+        # 最多重试 3 次（首次 + 2 次重试），退避 1s / 2s，消化偶发网络超时。
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient() as client:
+                    # 连接 10s，读取 120s（带思维链的模型首字较慢，给足余量）
+                    response = await client.post(
+                        f"{settings.LLM_API_BASE_URL}/chat/completions",
+                        headers=headers,
+                        json=payload,
+                        timeout=httpx.Timeout(connect=10, read=120, write=30, pool=10),
+                    )
+                    if response.status_code != 200:
+                        # Surface provider error detail so invalid-key / quota issues are diagnosable
+                        raise RuntimeError(
+                            f"LLM API error {response.status_code}: {response.text}"
+                        )
+                    data = response.json()
+                    break
+            except self._TRANSIENT as e:
+                last_err = e
+                if attempt < 2:
+                    await asyncio.sleep(1 * (attempt + 1))
+                    continue
+                raise
 
         choice = data["choices"][0]["message"]
+        raw_content = choice.get("content")
+        reasoning = choice.get("reasoning_content")
+        # Qwen3 / 带"思考"的模型常把正式回答放在 reasoning_content，content 可能为空串或 None；
+        # 此处回退，避免真实模型返回空 content 导致前端收不到任何文本帧（"发送成功但无输出"）。
+        content = raw_content or reasoning or ""
         return {
-            "content": choice.get("content"),
+            "content": content,
             "tool_calls": choice.get("tool_calls"),
         }
 

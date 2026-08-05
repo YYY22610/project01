@@ -22,12 +22,16 @@ interface AdminStore {
   fetchOpenClaw: () => Promise<void>
   toggleOpenClaw: (paused: boolean) => Promise<void>
   fetchParticipants: (params?: any) => Promise<any>
+  fetchParticipantDetail: (userId: string) => Promise<any>
   fetchSubmissions: () => Promise<void>
   fetchConfigs: () => Promise<void>
   fetchQuestionnaireConfig: () => Promise<void>
   setScore: (userId: string, data: any) => Promise<void>
   updateConfig: (key: string, value: string) => Promise<void>
   updateParticipantGroup: (userId: string, group: string) => Promise<void>
+  exportData: (format: 'xlsx' | 'csv', group?: string) => Promise<void>
+  downloadParticipantDocx: (userId: string) => Promise<void>
+  deleteParticipant: (userId: string) => Promise<void>
 }
 
 export const useAdminStore = create<AdminStore>((set, get) => ({
@@ -132,5 +136,43 @@ export const useAdminStore = create<AdminStore>((set, get) => ({
 
   updateParticipantGroup: async (userId, group) => {
     await adminApi.patch(`/participants/${userId}`, { group })
+  },
+
+  fetchParticipantDetail: async (userId) => {
+    try {
+      const res = await adminApi.get(`/participants/${userId}`)
+      return res.data
+    } catch (e) {
+      return null
+    }
+  },
+
+  exportData: async (format, group) => {
+    const params: any = {}
+    if (group) params.group = group
+    const res = await adminApi.get(
+      `/export/all${format === 'xlsx' ? '/xlsx' : ''}`,
+      { params, responseType: 'blob' }
+    )
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `experiment_data_${new Date().toISOString().slice(0, 10)}.${format === 'xlsx' ? 'xlsx' : 'csv'}`
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+
+  downloadParticipantDocx: async (userId) => {
+    const res = await adminApi.get(`/participants/${userId}/docx`, { responseType: 'blob' })
+    const url = URL.createObjectURL(res.data)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `participant_${userId}.docx`
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+
+  deleteParticipant: async (userId: string) => {
+    await adminApi.delete(`/participants/${userId}`)
   },
 }))

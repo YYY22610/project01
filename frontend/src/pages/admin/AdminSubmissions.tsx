@@ -19,7 +19,8 @@ const FACTOR_WEIGHTS: Record<string, number> = Object.fromEntries(
 function emptyScore() {
   return {
     scenic_score: 0, historic_score: 0, rarity_score: 0, scale_score: 0,
-    integrity_score: 0, fame_score: 0, season_score: 0, eco_score: 0, notes: '',
+    integrity_score: 0, fame_score: 0, season_score: 0, eco_score: 0,
+    quality_score: 0, reminder_correct: false, notes: '',
   }
 }
 
@@ -58,6 +59,8 @@ export default function AdminSubmissions() {
       fame_score: Number(s.fame_score) || 0,
       season_score: Number(s.season_score) || 0,
       eco_score: Number(s.eco_score) || 0,
+      quality_score: Number(s.quality_score) || 0,
+      reminder_correct: !!s.reminder_correct,
       notes: s.notes || '',
     }
     try {
@@ -221,15 +224,38 @@ export default function AdminSubmissions() {
                                 <span className="text-sm font-bold text-blue-600 w-6 text-center">{getScore(s.user_id).eco_score}</span>
                               </div>
                             </div>
-                            <div className="lg:col-span-3">
-                              <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
-                              <textarea
-                                value={getScore(s.user_id).notes}
-                                onChange={(e) => setFactor(s.user_id, 'notes', e.target.value)}
-                                className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
-                                rows={2}
-                                placeholder="评分说明..."
-                              />
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">综合完成质量评分 (1-10)</label>
+                              <div className="flex items-center gap-2">
+                                <input
+                                  type="range" min="0" max="10"
+                                  value={getScore(s.user_id).quality_score}
+                                  onChange={(e) => setFactor(s.user_id, 'quality_score', parseInt(e.target.value))}
+                                  className="flex-1"
+                                />
+                                <span className="text-sm font-bold text-blue-600 w-6 text-center">{getScore(s.user_id).quality_score}</span>
+                              </div>
+                            </div>
+                            <div className="lg:col-span-3 flex items-end gap-6">
+                              <label className="flex items-center gap-2 text-sm font-medium text-gray-700 cursor-pointer whitespace-nowrap pb-2">
+                                <input
+                                  type="checkbox"
+                                  checked={!!getScore(s.user_id).reminder_correct}
+                                  onChange={(e) => setFactor(s.user_id, 'reminder_correct', e.target.checked)}
+                                  className="w-4 h-4"
+                                />
+                                提醒正确性（人工判定 ✓）
+                              </label>
+                              <div className="flex-1">
+                                <label className="block text-sm font-medium text-gray-700 mb-1">备注</label>
+                                <textarea
+                                  value={getScore(s.user_id).notes}
+                                  onChange={(e) => setFactor(s.user_id, 'notes', e.target.value)}
+                                  className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                                  rows={2}
+                                  placeholder="评分说明..."
+                                />
+                              </div>
                             </div>
                           </div>
                           <div className="flex gap-2 mt-3">

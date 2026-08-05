@@ -32,8 +32,18 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "gpt-4o-mini"
 
     # Email
+    # 发信后端：smtp / resend / mock（留空则按「有 SMTP 配置→有 Resend key→mock」自动选择）
+    EMAIL_BACKEND: str = ""
+    # SMTP（推荐，国内可达，QQ/163/Gmail/腾讯企业邮/阿里云均支持）
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 465
+    SMTP_USER: str = ""          # 发信账号，如 123456@qq.com
+    SMTP_PASSWORD: str = ""      # 授权码（不是登录密码）
+    SMTP_USE_SSL: bool = True    # 465 端口用 SSL；587 端口请改为 False 并设置 SMTP_USE_TLS=True
+    SMTP_USE_TLS: bool = False   # 587 端口用 STARTTLS
+    SENDER_EMAIL: str = "experiment@example.com"  # 发件人，QQ 邮箱需与 SMTP_USER 一致
+    # Resend（备选，需国外信用卡 + 验证域名）
     RESEND_API_KEY: str = ""
-    SENDER_EMAIL: str = "experiment@example.com"
 
     # Search
     BING_SEARCH_API_KEY: str = ""

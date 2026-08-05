@@ -8,7 +8,7 @@ clamped to the 0-100 range.
 """
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Text, DateTime, func, ForeignKey
+from sqlalchemy import String, Integer, Text, DateTime, Boolean, func, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -69,7 +69,11 @@ class AdminScore(Base):
 
     # 兼容旧字段（保留，历史数据可追溯）
     rationality_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    quality_score: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    quality_score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 综合完成质量评分 (0-10)
+
+    # 提醒正确性：由研究员人工判定（需求5.1.2，选C：只记录不自动比对，人工打勾）
+    reminder_correct: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+
     notes: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     scored_by: Mapped[str | None] = mapped_column(String(100), nullable=True)

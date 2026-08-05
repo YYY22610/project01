@@ -1,5 +1,7 @@
 """Reminder router: set and list reminders."""
-from fastapi import APIRouter, Depends
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +22,13 @@ async def set_reminder(
     db: AsyncSession = Depends(get_db),
 ):
     """Set a travel reminder."""
+    now = datetime.now(timezone.utc)
+    dt = req.reminder_datetime
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    if dt < now:
+        raise HTTPException(status_code=400, detail="提醒时间不能早于当前时间")
+
     reminder = Reminder(
         user_id=user.id,
         reminder_datetime=req.reminder_datetime,

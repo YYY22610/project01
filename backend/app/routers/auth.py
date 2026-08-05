@@ -8,7 +8,7 @@ from app.database import get_db
 from app.deps import get_current_user
 from app.models.user import User, UserStatus
 from app.schemas.auth import (
-    RegisterRequest, LoginRequest, DemographicsRequest,
+    RegisterRequest, LoginRequest, EmailLoginRequest, DemographicsRequest,
     TokenResponse, UserResponse,
     AdminLoginRequest, AdminTokenResponse,
 )
@@ -32,7 +32,7 @@ async def register(req: RegisterRequest, db: AsyncSession = Depends(get_db)):
 
     user = User(
         email=req.email,
-        password_hash=hash_password(req.password),
+        password_hash=hash_password(req.password) if req.password else None,
         status=UserStatus.REGISTERED,
     )
     db.add(user)
@@ -53,6 +53,26 @@ async def login(req: LoginRequest, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=401, detail="邮箱或密码错误")
 
     token = create_user_token(str(user.id), user.group.value if user.group else None, user.status.value)
+    return TokenResponse(access_token=token, user_id=str(user.id), status=user.status.value)
+
+
+@router.post("/login-by-email", response_model=TokenResponse)
+async def login_by_email(req: EmailLoginRequest, db: AsyncSession = Depends(get_db)):
+    """邮箱直登：仅已注册邮箱即可登录（实验平台免密登录）。
+
+    分组是否变化由前端比对 JWT 中的 group 与本地记录判断，
+    若管理员改过分组，前端会再调用 /task/reset 让参与者重走流程。
+    """
+    result = await db.execute(select(User).where(User.email == req.email))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=400, detail="该邮箱未注册，请先注册")
+
+    token = create_user_token(
+        str(user.id),
+        user.group.value if user.group else None,
+        user.status.value,
+    )
     return TokenResponse(access_token=token, user_id=str(user.id), status=user.status.value)
 
 

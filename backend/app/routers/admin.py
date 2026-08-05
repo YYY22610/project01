@@ -2,6 +2,7 @@
 import io
 import csv
 import json
+from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
@@ -13,12 +14,18 @@ from app.deps import get_current_admin
 from app.models.user import User, UserStatus, ExperimentGroup
 from app.models.behavior_log import BehaviorLog, ActionType
 from app.models.task_submission import TaskSubmission
+from app.models.reminder import Reminder
 from app.models.questionnaire import QuestionnaireItem, QuestionnaireResponse
 from app.models.admin_score import AdminScore, compute_total
+from app.models.chat_message import ChatMessage
 from app.models.system_config import SystemConfig
 from app.models.admin_user import AdminUser
 from app.schemas.auth import AdminLoginRequest, AdminTokenResponse
 from app.schemas.common import DashboardStats, AdminScoreRequest, SystemConfigUpdate, OpenClawStatus
+from app.schemas.questionnaire import (
+    QuestionnaireItemAdminCreate,
+    QuestionnaireItemAdminUpdate,
+)
 from app.services.auth_service import verify_password, create_admin_token
 
 router = APIRouter()
@@ -406,11 +413,24 @@ async def get_participant_detail(
     score_result = await db.execute(select(AdminScore).where(AdminScore.user_id == user_id))
     scores = score_result.scalars().all()
 
+    reminder_result = await db.execute(
+        select(Reminder)
+        .where(Reminder.user_id == user_id)
+        .order_by(Reminder.reminder_datetime)
+    )
+    reminders = reminder_result.scalars().all()
+
     log_result = await db.execute(
         select(BehaviorLog).where(BehaviorLog.user_id == user_id)
         .order_by(BehaviorLog.timestamp.desc()).limit(100)
     )
     logs = log_result.scalars().all()
+
+    # 文档下载文件名（管理员可下载参与者提交的 Word）
+    docx_file_name = None
+    if submission and submission.docx_file_path:
+        import os
+        docx_file_name = os.path.basename(submission.docx_file_path)
 
     return {
         "user": {
@@ -430,10 +450,21 @@ async def get_participant_detail(
             "task3_reminder": submission.task3_reminder if submission else False,
             "task4_email": submission.task4_email if submission else False,
             "docx_file_path": submission.docx_file_path if submission else None,
+            "docx_file_name": docx_file_name,
             "email_status": submission.email_status if submission else None,
+            "email_recipient": submission.email_recipient if submission else None,
             "duration_ms": submission.duration_ms if submission else None,
             "submitted_at": submission.submitted_at.isoformat() if submission and submission.submitted_at else None,
         } if submission else None,
+        "reminders": [
+            {
+                "id": str(r.id),
+                "reminder_datetime": r.reminder_datetime.isoformat() if r.reminder_datetime else None,
+                "content": r.content or "",
+                "is_set": r.is_set,
+            }
+            for r in reminders
+        ],
         "scores": [
             {
                 "scenic_score": s.scenic_score,
@@ -445,6 +476,8 @@ async def get_participant_detail(
                 "season_score": s.season_score,
                 "eco_score": s.eco_score,
                 "total_score": s.total_score,
+                "quality_score": s.quality_score,
+                "reminder_correct": s.reminder_correct,
                 "notes": s.notes,
             }
             for s in scores
@@ -465,6 +498,50 @@ async def get_participant_detail(
             for log in logs[:20]
         ],
     }
+
+
+@router.delete("/participants/{user_id}")
+async def delete_participant(
+    user_id: str,
+    admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a participant and all associated data (logs, submissions, reminders, scores, responses, chat messages)."""
+    result = await db.execute(select(User).where(User.id == user_id))
+    user = result.scalar_one_or_none()
+    if not user:
+        raise HTTPException(status_code=404, detail="参与者不存在")
+
+    # 级联删除关联数据，避免外键约束报错
+    for model in (BehaviorLog, TaskSubmission, Reminder, QuestionnaireResponse, AdminScore, ChatMessage):
+        await db.execute(model.__table__.delete().where(model.user_id == user_id))
+
+    await db.delete(user)
+    await db.commit()
+    return {"success": True, "deleted_id": user_id}
+
+
+@router.get("/participants/{user_id}/docx")
+async def download_participant_docx(
+    user_id: str,
+    admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Admin download of a participant's generated Word document (需求5.1.1/5.2)."""
+    import os
+    from fastapi.responses import FileResponse
+
+    result = await db.execute(select(TaskSubmission).where(TaskSubmission.user_id == user_id))
+    submission = result.scalar_one_or_none()
+    if not submission or not submission.docx_file_path or not os.path.exists(submission.docx_file_path):
+        raise HTTPException(status_code=404, detail="文档不存在")
+
+    file_path = submission.docx_file_path
+    return FileResponse(
+        file_path,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        filename=os.path.basename(file_path),
+    )
 
 
 @router.get("/submissions")
@@ -490,7 +567,7 @@ async def list_submissions(
     result = await db.execute(
         select(TaskSubmission, User, scored_subq, total_subq)
         .join(User, TaskSubmission.user_id == User.id)
-        .order_by(TaskSubmission.submitted_at.desc())
+        .order_by(User.created_at.desc())
         .offset((page - 1) * page_size).limit(page_size)
     )
     rows = result.all()
@@ -545,6 +622,8 @@ async def set_score(
         existing.season_score = req.season_score
         existing.eco_score = req.eco_score
         existing.total_score = total
+        existing.quality_score = req.quality_score
+        existing.reminder_correct = bool(req.reminder_correct or False)
         existing.notes = req.notes
         existing.scored_by = admin.get("sub", "admin")
         existing.updated_at = datetime.now()
@@ -561,6 +640,8 @@ async def set_score(
             season_score=req.season_score,
             eco_score=req.eco_score,
             total_score=total,
+            quality_score=req.quality_score,
+            reminder_correct=bool(req.reminder_correct or False),
             notes=req.notes,
             scored_by=admin.get("sub", "admin"),
         )
@@ -597,25 +678,142 @@ async def update_config(
     return {"status": "ok"}
 
 
+def _question_type_to_frontend(item: QuestionnaireItem) -> str:
+    """Map DB question_type + scale_level to frontend type tokens."""
+    if item.question_type.value == "likert":
+        return f"likert{item.scale_level or 5}"
+    if item.question_type.value == "choice":
+        # DB does not distinguish single/multiple; prefer single_choice when options exist.
+        return "single_choice" if item.options else "choice"
+    return item.question_type.value
+
+
+def _frontend_type_to_db(payload_type: str, scale_level: int | None = None) -> tuple:
+    """Return (QuestionType, scale_level) from frontend type token."""
+    from app.models.questionnaire import QuestionType
+
+    if payload_type == "likert5":
+        return QuestionType.likert, 5
+    if payload_type == "likert7":
+        return QuestionType.likert, 7
+    if payload_type in ("single_choice", "multiple_choice"):
+        return QuestionType.choice, scale_level or 5
+    if payload_type == "text":
+        return QuestionType.text, scale_level or 5
+    # Fallback
+    return QuestionType.likert, scale_level or 5
+
+
+def _item_to_admin_response(item: QuestionnaireItem) -> dict:
+    return {
+        "id": str(item.id),
+        "construct": item.construct,
+        "text": item.question_text,
+        "type": _question_type_to_frontend(item),
+        "options": item.options,
+        "scale_level": item.scale_level,
+        "sort_order": item.sort_order,
+        "is_active": item.is_active,
+        "applicable_groups": item.applicable_groups,
+    }
+
+
 @router.get("/questionnaire-config")
 async def get_questionnaire_config(admin: dict = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    """Get all questionnaire items for admin management."""
+    """Get all questionnaire items for admin management (frontend-friendly format)."""
     result = await db.execute(
         select(QuestionnaireItem).order_by(QuestionnaireItem.sort_order)
     )
     items = result.scalars().all()
-    return [
-        {
-            "id": str(item.id),
-            "construct": item.construct,
-            "question_text": item.question_text,
-            "question_type": item.question_type.value,
-            "scale_level": item.scale_level,
-            "sort_order": item.sort_order,
-            "is_active": item.is_active,
-        }
-        for item in items
-    ]
+    return [_item_to_admin_response(item) for item in items]
+
+
+@router.post("/questionnaire-config")
+async def create_questionnaire_item(
+    req: QuestionnaireItemAdminCreate,
+    admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Create a new questionnaire item."""
+    question_type, scale_level = _frontend_type_to_db(req.type, req.scale_level)
+
+    # Auto-assign sort_order to end if not provided
+    sort_order = req.sort_order
+    if sort_order == 0:
+        max_order = (await db.execute(
+            select(func.coalesce(func.max(QuestionnaireItem.sort_order), 0))
+        )).scalar()
+        sort_order = int(max_order) + 1
+
+    item = QuestionnaireItem(
+        construct=req.construct,
+        question_text=req.text,
+        question_type=question_type,
+        options=req.options,
+        scale_level=scale_level,
+        sort_order=sort_order,
+        is_active=req.is_active,
+        applicable_groups=req.applicable_groups,
+    )
+    db.add(item)
+    await db.commit()
+    await db.refresh(item)
+    return _item_to_admin_response(item)
+
+
+@router.put("/questionnaire-config/{item_id}")
+async def update_questionnaire_item(
+    item_id: str,
+    req: QuestionnaireItemAdminUpdate,
+    admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Update an existing questionnaire item."""
+    result = await db.execute(select(QuestionnaireItem).where(QuestionnaireItem.id == item_id))
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="题项不存在")
+
+    if req.construct is not None:
+        item.construct = req.construct
+    if req.text is not None:
+        item.question_text = req.text
+    if req.type is not None or req.scale_level is not None:
+        question_type, scale_level = _frontend_type_to_db(
+            req.type or _question_type_to_frontend(item),
+            req.scale_level if req.scale_level is not None else item.scale_level,
+        )
+        item.question_type = question_type
+        item.scale_level = scale_level
+    if req.options is not None:
+        item.options = req.options
+    if req.sort_order is not None:
+        item.sort_order = req.sort_order
+    if req.is_active is not None:
+        item.is_active = req.is_active
+    if req.applicable_groups is not None:
+        item.applicable_groups = req.applicable_groups
+
+    await db.commit()
+    await db.refresh(item)
+    return _item_to_admin_response(item)
+
+
+@router.delete("/questionnaire-config/{item_id}")
+async def delete_questionnaire_item(
+    item_id: str,
+    admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a questionnaire item."""
+    result = await db.execute(select(QuestionnaireItem).where(QuestionnaireItem.id == item_id))
+    item = result.scalar_one_or_none()
+    if not item:
+        raise HTTPException(status_code=404, detail="题项不存在")
+
+    await db.delete(item)
+    await db.commit()
+    return {"status": "ok"}
 
 
 @router.get("/export/participants")
@@ -730,16 +928,88 @@ async def export_scores(admin: dict = Depends(get_current_admin), db: AsyncSessi
     )
 
 
-@router.get("/export/all")
-async def export_all(admin: dict = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    """Export a combined CSV joining participants + submissions + scores."""
+# 问卷构念中文标签（用于导出列名）
+QUESTIONNAIRE_CONSTRUCT_LABELS = {
+    "trust": "信任",
+    "autonomy": "自主",
+    "satisfaction": "满意",
+    "task_load": "负荷",
+    "future_use": "未来意愿",
+    "manipulation_check": "操纵检验",
+}
+
+
+async def _compute_questionnaire_scores(db: AsyncSession) -> dict:
+    """Aggregate questionnaire responses per user.
+
+    Returns: { user_id: { construct: avg, '_overall': overall_avg,
+                           'manipulation_check': raw_text } }.
+
+    Likert (numeric) responses are averaged per construct. The manipulation_check
+    construct is *categorical* (choice questions like "是否使用AI助理"), so its raw
+    text answers are preserved verbatim (joined by " | ") instead of being averaged —
+    otherwise the column would always be empty. This is the key condition-comprehension
+    check for the single-blind design.
+    """
     result = await db.execute(
+        select(
+            QuestionnaireResponse.user_id,
+            QuestionnaireItem.construct,
+            QuestionnaireResponse.response_value,
+        ).join(QuestionnaireItem, QuestionnaireResponse.item_id == QuestionnaireItem.id)
+    )
+    grouped: dict = defaultdict(lambda: defaultdict(list))   # numeric Likert means
+    manip: dict = defaultdict(list)                          # raw text for manipulation_check
+    for user_id, construct, value in result.all():
+        uid = str(user_id)  # key as str to match str(user.id) lookups at export time
+        if construct == "manipulation_check":
+            text = (str(value).strip() if value is not None else "")
+            if text:
+                manip[uid].append(text)
+            continue
+        try:
+            num = int(str(value).strip())
+        except (ValueError, TypeError):
+            continue
+        grouped[uid][construct].append(num)
+
+    out: dict = {}
+    # Users with Likert responses
+    for uid, constructs in grouped.items():
+        per = {c: round(sum(v) / len(v), 2) for c, v in constructs.items()}
+        all_vals = [x for v in constructs.values() for x in v]
+        per["_overall"] = round(sum(all_vals) / len(all_vals), 2) if all_vals else None
+        if manip.get(uid):
+            per["manipulation_check"] = " | ".join(manip[uid])
+        out[uid] = per
+    # Users who only answered the manipulation-check questions (no Likert)
+    for uid, vals in manip.items():
+        if uid not in out:
+            out[uid] = {"_overall": None, "manipulation_check": " | ".join(vals)}
+    return out
+
+
+@router.get("/export/all")
+async def export_all(
+    group: str | None = Query(None),
+    admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export a combined CSV joining participants + submissions + scores + questionnaire.
+
+    Supports `group` filter (H / SOA / MOA) for per-group SPSS export (需求5.3).
+    """
+    query = (
         select(User, TaskSubmission, AdminScore)
         .outerjoin(TaskSubmission, TaskSubmission.user_id == User.id)
         .outerjoin(AdminScore, AdminScore.user_id == User.id)
         .order_by(User.created_at)
     )
-    rows = result.all()
+    if group:
+        query = query.where(cast(User.group, String) == group)
+    rows = (await db.execute(query)).all()
+
+    q_scores = await _compute_questionnaire_scores(db)
 
     output = io.StringIO()
     writer = csv.writer(output)
@@ -749,9 +1019,11 @@ async def export_all(admin: dict = Depends(get_current_admin), db: AsyncSession 
         "Task1_Search", "Task2_Document", "Task3_Reminder", "Task4_Email",
         "Duration_Ms", "Submitted_At",
         "Scenic", "Historic", "Rarity", "Scale", "Integrity", "Fame", "Season",
-        "Eco", "Total_Score", "Notes",
+        "Eco", "Total_Score", "Quality_Score", "Reminder_Correct", "Notes",
+        "Questionnaire_Overall", "信任", "自主", "满意", "负荷", "未来意愿", "操纵检验",
     ])
     for user, sub, score in rows:
+        qs = q_scores.get(str(user.id), {})
         writer.writerow([
             user.email,
             user.group.value if user.group else "",
@@ -774,7 +1046,16 @@ async def export_all(admin: dict = Depends(get_current_admin), db: AsyncSession 
             score.season_score if score and score.season_score is not None else "",
             score.eco_score if score and score.eco_score is not None else "",
             score.total_score if score and score.total_score is not None else "",
+            score.quality_score if score and score.quality_score is not None else "",
+            score.reminder_correct if score else "",
             (score.notes or "") if score else "",
+            qs.get("_overall", "") if qs else "",
+            qs.get("trust", "") if qs else "",
+            qs.get("autonomy", "") if qs else "",
+            qs.get("satisfaction", "") if qs else "",
+            qs.get("task_load", "") if qs else "",
+            qs.get("future_use", "") if qs else "",
+            qs.get("manipulation_check", "") if qs else "",
         ])
 
     output.seek(0)
@@ -813,8 +1094,15 @@ async def update_participant_group(
 
 
 @router.get("/export/all/xlsx")
-async def export_all_xlsx(admin: dict = Depends(get_current_admin), db: AsyncSession = Depends(get_db)):
-    """Export experiment data as Excel (.xlsx) with three sheets: 汇总 / 行为日志 / 评分."""
+async def export_all_xlsx(
+    group: str | None = Query(None),
+    admin: dict = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    """Export experiment data as Excel (.xlsx) with three sheets: 汇总 / 行为日志 / 评分.
+
+    Supports `group` filter (H / SOA / MOA) and includes questionnaire scores (需求5.3).
+    """
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment
 
@@ -827,22 +1115,30 @@ async def export_all_xlsx(admin: dict = Depends(get_current_admin), db: AsyncSes
             cell.fill = fill
             cell.alignment = Alignment(horizontal="center", vertical="center")
 
-    # ---- Sheet 1: 汇总 (participants + submissions + scores) ----
-    combined = await db.execute(
+    # ---- Sheet 1: 汇总 (participants + submissions + scores + questionnaire) ----
+    combined_q = (
         select(User, TaskSubmission, AdminScore)
         .outerjoin(TaskSubmission, TaskSubmission.user_id == User.id)
         .outerjoin(AdminScore, AdminScore.user_id == User.id)
         .order_by(User.created_at)
     )
+    if group:
+        combined_q = combined_q.where(cast(User.group, String) == group)
+    combined = await db.execute(combined_q)
+    q_scores = await _compute_questionnaire_scores(db)
+
     ws1 = wb.active
     ws1.title = "汇总"
     ws1.append([
         "Email", "Group", "Status", "Age", "Gender", "Education", "Tech_Frequency", "AI_Experience",
         "Created_At", "Task1_Search", "Task2_Document", "Task3_Reminder", "Task4_Email",
         "Duration_Ms", "Submitted_At",
-        "Scenic", "Historic", "Rarity", "Scale", "Integrity", "Fame", "Season", "Eco", "Total_Score", "Notes",
+        "Scenic", "Historic", "Rarity", "Scale", "Integrity", "Fame", "Season", "Eco",
+        "Total_Score", "Quality_Score", "Reminder_Correct", "Notes",
+        "Questionnaire_Overall", "信任", "自主", "满意", "负荷", "未来意愿", "操纵检验",
     ])
     for user, sub, score in combined.all():
+        qs = q_scores.get(str(user.id), {})
         ws1.append([
             user.email,
             user.group.value if user.group else "",
@@ -865,7 +1161,16 @@ async def export_all_xlsx(admin: dict = Depends(get_current_admin), db: AsyncSes
             score.season_score if score and score.season_score is not None else "",
             score.eco_score if score and score.eco_score is not None else "",
             score.total_score if score and score.total_score is not None else "",
+            score.quality_score if score and score.quality_score is not None else "",
+            score.reminder_correct if score else "",
             (score.notes or "") if score else "",
+            qs.get("_overall", "") if qs else "",
+            qs.get("trust", "") if qs else "",
+            qs.get("autonomy", "") if qs else "",
+            qs.get("satisfaction", "") if qs else "",
+            qs.get("task_load", "") if qs else "",
+            qs.get("future_use", "") if qs else "",
+            qs.get("manipulation_check", "") if qs else "",
         ])
     style_header(ws1)
 

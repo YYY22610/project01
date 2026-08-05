@@ -4,8 +4,12 @@ from typing import Optional, Any
 
 
 class ChatRequest(BaseModel):
-    agent_id: str = "soa"  # soa / moa_a / moa_b / moa_c
+    agent_id: str = "soa"  # soa / moa_a / moa_b
     message: str
+
+
+class CancelRequest(BaseModel):
+    agent_id: str = "soa"  # 要中断的助理 ID
 
 
 class ChatMessageResponse(BaseModel):

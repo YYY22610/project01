@@ -3,10 +3,12 @@ import type { User, TaskConfig, TaskStatus, SearchResult, QuestionnaireItem, Beh
 
 // Auth
 export const authApi = {
-  register: (email: string, password: string) =>
-    api.post('/auth/register', { email, password }),
+  register: (email: string) =>
+    api.post('/auth/register', { email }),
   login: (email: string, password: string) =>
     api.post('/auth/login', { email, password }),
+  loginByEmail: (email: string) =>
+    api.post('/auth/login-by-email', { email }),
   consent: () => api.post('/auth/consent'),
   demographics: (data: any) => api.post('/auth/demographics', data),
   me: () => api.get<User>('/auth/me'),
@@ -22,6 +24,7 @@ export const taskApi = {
   start: () => api.post('/task/start'),
   submit: (data: any) => api.post('/task/submit', data),
   status: () => api.get('/task/status'),
+  reset: () => api.post('/task/reset'),
 }
 
 // Search
@@ -95,7 +98,8 @@ export const agentApi = {
   chat: async (
     agentId: string,
     message: string,
-    onEvent: (event: string, data: any) => void
+    onEvent: (event: string, data: any) => void,
+    signal?: AbortSignal
   ): Promise<void> => {
     const token = localStorage.getItem('access_token')
     const response = await fetch('/api/agent/chat', {
@@ -105,39 +109,58 @@ export const agentApi = {
         'Authorization': `Bearer ${token}`,
       },
       body: JSON.stringify({ agent_id: agentId, message }),
+      signal,
     })
 
     if (!response.ok) {
-      throw new Error(`Agent chat failed: ${response.status}`)
+      let detail = `Agent chat failed: ${response.status}`
+      try {
+        const body = await response.json()
+        if (body?.detail) detail = `Agent chat failed: ${response.status} - ${body.detail}`
+      } catch {
+        // 非 JSON 响应时保持默认提示
+      }
+      throw new Error(detail)
     }
 
     const reader = response.body!.getReader()
     const decoder = new TextDecoder()
     let buffer = ''
 
-    while (true) {
-      const { done, value } = await reader.read()
-      if (done) break
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
 
-      buffer += decoder.decode(value, { stream: true })
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
 
-      let currentEvent = ''
-      for (const line of lines) {
-        if (line.startsWith('event: ')) {
-          currentEvent = line.slice(7).trim()
-        } else if (line.startsWith('data: ') && currentEvent) {
-          try {
-            const data = JSON.parse(line.slice(6))
-            onEvent(currentEvent, data)
-          } catch {
-            onEvent(currentEvent, line.slice(6))
+        let currentEvent = ''
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim()
+          } else if (line.startsWith('data: ') && currentEvent) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              onEvent(currentEvent, data)
+            } catch {
+              onEvent(currentEvent, line.slice(6))
+            }
+            currentEvent = ''
           }
-          currentEvent = ''
         }
       }
+    } catch (err: any) {
+      // 用户主动中断（AbortController.abort）时静默结束，不视为错误
+      if (err?.name === 'AbortError') return
+      throw err
     }
+  },
+
+  /** 干预接口：参与者随时中断指定助理的当前操作 */
+  cancel: async (agentId: string): Promise<void> => {
+    await api.post('/agent/cancel', { agent_id: agentId })
   },
 }
 

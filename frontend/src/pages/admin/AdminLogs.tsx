@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, Fragment } from 'react'
 import { adminApi } from '../../services/api'
 
 export default function AdminLogs() {
@@ -9,7 +9,31 @@ export default function AdminLogs() {
   const [selectedLog, setSelectedLog] = useState<any>(null)
   const [page, setPage] = useState(1)
   const [total, setTotal] = useState(0)
-  const pageSize = 50
+  const [expandedUsers, setExpandedUsers] = useState<Set<string>>(new Set())
+  const [userPage, setUserPage] = useState(1)
+  // 一次性拉取足够多的日志，让前端可以按用户全局折叠（当前 656 条，10000 为安全上限）
+  const pageSize = 10000
+  const usersPerPage = 20
+
+  const userKey = (log: any) => log.user_email || log.user_id || '未知用户'
+
+  const groupedLogs = logs.reduce((acc, log) => {
+    const key = userKey(log)
+    if (!acc[key]) acc[key] = []
+    acc[key].push(log)
+    return acc
+  }, {} as Record<string, any[]>)
+
+  const groupedUsers = Object.keys(groupedLogs)
+
+  const toggleUser = (key: string) => {
+    setExpandedUsers((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key)
+      else next.add(key)
+      return next
+    })
+  }
 
   const actionTypes = [
     'page_view', 'search_query', 'search_result_click', 'document_edit', 'document_save',
@@ -24,6 +48,7 @@ export default function AdminLogs() {
   const loadLogs = async (p: number) => {
     setLoading(true)
     setPage(p)
+    setUserPage(1)
     try {
       const res = await adminApi.get('/logs', {
         params: { page: p, page_size: pageSize, search, action_type: actionFilter }
@@ -40,6 +65,10 @@ export default function AdminLogs() {
   const handleSearch = () => loadLogs(1)
 
   const totalPages = Math.ceil(total / pageSize)
+
+  // 按用户分页（折叠态每页显示 usersPerPage 位用户）
+  const userTotalPages = Math.ceil(groupedUsers.length / usersPerPage)
+  const displayedUsers = groupedUsers.slice((userPage - 1) * usersPerPage, userPage * usersPerPage)
 
   const actionColor = (a: string) => {
     if (a === 'error') return 'bg-red-100 text-red-700'
@@ -98,35 +127,57 @@ export default function AdminLogs() {
                 {logs.length === 0 ? (
                   <tr><td colSpan={8} className="text-center py-12 text-gray-400">暂无日志</td></tr>
                 ) : (
-                  logs.map((log) => (
-                    <tr key={log.id} className="hover:bg-gray-50">
-                      <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{new Date(log.timestamp).toLocaleString('zh-CN')}</td>
-                      <td className="px-4 py-3 text-sm text-gray-800">{log.user_email || log.user_id}</td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${actionColor(log.action_type)}`}>{log.action_type}</span>
-                      </td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{log.phase || '-'}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600">{log.request_latency_ms ?? '-'}</td>
-                      <td className="px-4 py-3 text-center">{successBadge(log.is_success)}</td>
-                      <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{log.action_target || log.input_content || '-'}</td>
-                      <td className="px-4 py-3 text-center">
-                        <button onClick={() => setSelectedLog(log)} className="text-blue-600 hover:underline text-sm">详情</button>
-                      </td>
-                    </tr>
-                  ))
+                  displayedUsers.map((user) => {
+                    const userLogs = groupedLogs[user]
+                    const expanded = expandedUsers.has(user)
+                    return (
+                      <Fragment key={user}>
+                        <tr className="bg-gray-50 hover:bg-gray-100 cursor-pointer transition" onClick={() => toggleUser(user)}>
+                          <td className="px-4 py-3 text-sm" colSpan={8}>
+                            <div className="flex items-center justify-between">
+                              <div className="flex items-center gap-3">
+                                <span className="text-gray-800 font-medium">{user}</span>
+                                <span className="px-2 py-0.5 rounded-full text-xs bg-blue-100 text-blue-700">{userLogs.length} 条日志</span>
+                                <span className="text-xs text-gray-400">最近：{new Date(userLogs[0].timestamp).toLocaleString('zh-CN')}</span>
+                              </div>
+                              <span className="text-xs text-blue-600 font-medium">{expanded ? '收起 ▲' : '展开 ▼'}</span>
+                            </div>
+                          </td>
+                        </tr>
+                        {expanded && userLogs.map((log: any) => (
+                          <tr key={log.id} className="hover:bg-gray-50">
+                            <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{new Date(log.timestamp).toLocaleString('zh-CN')}</td>
+                            <td className="px-4 py-3 text-sm text-gray-800">{log.user_email || log.user_id}</td>
+                            <td className="px-4 py-3 text-center">
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${actionColor(log.action_type)}`}>{log.action_type}</span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{log.phase || '-'}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600">{log.request_latency_ms ?? '-'}</td>
+                            <td className="px-4 py-3 text-center">{successBadge(log.is_success)}</td>
+                            <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">{log.action_target || log.input_content || '-'}</td>
+                            <td className="px-4 py-3 text-center">
+                              <button onClick={(e) => { e.stopPropagation(); setSelectedLog(log) }} className="text-blue-600 hover:underline text-sm">详情</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </Fragment>
+                    )
+                  })
                 )}
               </tbody>
             </table>
           </div>
         )}
 
-        {/* Pagination */}
-        {totalPages > 1 && (
+        {/* Pagination：按用户分页 */}
+        {userTotalPages > 1 && (
           <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100">
-            <span className="text-sm text-gray-500">共 {total} 条，第 {page}/{totalPages} 页</span>
+            <span className="text-sm text-gray-500">
+              共 {groupedUsers.length} 位用户 / {total} 条日志，第 {userPage}/{userTotalPages} 页
+            </span>
             <div className="flex gap-1">
-              <button onClick={() => loadLogs(page - 1)} disabled={page <= 1} className="px-3 py-1 text-sm border border-gray-300 rounded disabled:opacity-40">上一页</button>
-              <button onClick={() => loadLogs(page + 1)} disabled={page >= totalPages} className="px-3 py-1 text-sm border border-gray-300 rounded disabled:opacity-40">下一页</button>
+              <button onClick={() => setUserPage((p) => Math.max(1, p - 1))} disabled={userPage <= 1} className="px-3 py-1 text-sm border border-gray-300 rounded disabled:opacity-40">上一页</button>
+              <button onClick={() => setUserPage((p) => Math.min(userTotalPages, p + 1))} disabled={userPage >= userTotalPages} className="px-3 py-1 text-sm border border-gray-300 rounded disabled:opacity-40">下一页</button>
             </div>
           </div>
         )}
