@@ -13,7 +13,7 @@
 |------|------|------------|
 | **H** | 纯人工（Pure Human） | 无 AI 辅助 |
 | **H+SOA** | 单智能体辅助（Single AI Assistant） | 1 个 AI 助理 |
-| **H+MOA** | 多智能体辅助（Multi AI Assistants） | 3 个分工 AI 助理 |
+| **H+MOA** | 多智能体辅助（Multi AI Assistants） | 2 个分工 AI 助理：信息检索专员、行程编排专员 |
 
 核心实验任务为**「杭州 N 日游行程规划」**（默认 N=3，预算 M=1000 元），包含四项子任务：
 
@@ -77,7 +77,7 @@ travel-experiment-platform/
 ├── database/
 │   ├── schema.sql            # 建表脚本（10 张表）
 │   └── seed.sql              # 初始数据（系统配置、问卷题项）
-├── docker-compose.yml        # PostgreSQL 容器编排
+├── docker-compose.yml        # 全栈容器编排（PostgreSQL + backend + frontend）
 ├── .gitignore
 └── README.md
 ```
