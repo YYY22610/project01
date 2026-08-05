@@ -209,10 +209,161 @@ npm run dev
 
 ## 十、部署（可选）
 
-- **数据库**：使用 Docker Compose 或云托管 PostgreSQL。
-- **后端**：Gunicorn + Uvicorn Worker 部署于云服务器 / Railway。
-- **前端**：`npm run build` 后静态托管于 Vercel / Nginx。
-- 需将 `.env` 中的 `CORS_ORIGINS` 改为生产域名。
+平台采用前后端分离架构，前端用相对路径 `/api` 访问后端，因此**生产环境必须由反向代理把 `/api` 转发到后端**，否则前端请求会 404。下面给出三种可行方案。
+
+### 10.1 方案对比
+
+| 方案 | 适用场景 | 复杂度 | 说明 |
+|------|----------|--------|------|
+| 分离部署（推荐） | 自有服务器 / Railway + Vercel | 中 | 后端跑 uvicorn，前端静态托管 + 反代 `/api`，最稳、可控 |
+| Docker 全栈 | 一键拉起整套 | 低 | 见 10.6；**注意当前仓库 `backend`/`frontend` 的 Dockerfile 尚未提供**（见下方提示） |
+| 纯云托管 | 快速演示 | 低 | 数据库用云 PostgreSQL，后端 Railway，前端 Vercel |
+
+### 10.2 数据库（生产）
+
+- **云托管**：在腾讯云 / 阿里云 / Railway 等创建 PostgreSQL 实例，拿到连接串填入后端 `.env` 的 `DATABASE_URL`。
+- **首次建表与种子数据**：将 `database/schema.sql` 与 `database/seed.sql` 依次导入（表结构与初始配置、问卷题项）；
+  ```bash
+  psql "$DATABASE_URL" -f database/schema.sql
+  psql "$DATABASE_URL" -f database/seed.sql
+  ```
+- 后端在启动事件里会调用 `init_db()`，但**仅用于确保连接**，**不会**自动建表；生产务必先导入上面两个 SQL。
+
+### 10.3 后端部署
+
+```bash
+cd backend
+python -m venv venv && source venv/bin/activate      # 或 Windows: .\venv\Scripts\activate
+pip install -r requirements.txt
+cp .env.example .env                                 # 按生产环境填写（见 10.7）
+```
+
+**启动方式：**
+
+- 单进程（轻量 / 演示）：
+  ```bash
+  uvicorn app.main:app --host 0.0.0.0 --port 8000
+  ```
+- 多 worker（生产推荐，需先 `pip install gunicorn`）：
+  ```bash
+  gunicorn app.main:app -k uvicorn.workers.UvicornWorker \
+    -b 0.0.0.0:8000 --workers 2
+  ```
+- 常驻运行建议配合进程管理器（`systemd` / `supervisor`）或平台自带的后台任务，避免终端关闭即停。
+
+部署后访问 `http://<后端域名或IP>:8000/docs` 可确认 Swagger 正常。
+
+### 10.4 前端部署
+
+```bash
+cd frontend
+npm install
+npm run build        # 产物输出到 frontend/dist/
+```
+
+`dist/` 是纯静态文件，可托管到：
+
+- **Vercel / Netlify / 对象存储（OSS、S3）+ CDN**；
+- **Nginx / Apache** 静态目录。
+
+**关键：必须反代 `/api`**。前端 axios 的 `baseURL` 是相对 `/api`，所以所有 `/api/*` 请求都打到同源域名，需由托管层转发到后端 `:8000`。
+
+**Nginx 示例配置：**
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.com;
+
+    # 前端静态文件
+    root /var/www/frontend/dist;
+    index index.html;
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # 反向代理 API 到后端
+    location /api/ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # SSE（AI 流式对话）需关闭缓冲
+        proxy_set_header Connection '';
+        proxy_http_version 1.1;
+        chunked_transfer_encoding on;
+    }
+}
+```
+
+**Vercel（`vercel.json`）示例：**
+
+```json
+{
+  "buildCommand": "npm run build",
+  "outputDirectory": "dist",
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "https://<你的后端地址>/api/:path*" }
+  ]
+}
+```
+
+### 10.5 生产环境变量检查清单（`.env`）
+
+| 变量 | 生产建议 |
+|------|----------|
+| `SECRET_KEY` | **必须更换**为强随机串，不要再用 `change-me` |
+| `CORS_ORIGINS` | 改为前端真实域名，如 `https://your-domain.com`（多个用逗号分隔） |
+| `DATABASE_URL` | 生产数据库连接串（含密码） |
+| `LLM_API_KEY` | 填入真实 Key；留空则走 Mock 模式（AI 回复为模拟数据） |
+| 邮件 (`RESEND_API_KEY` / `SENDER_EMAIL`) | 真实邮件服务密钥；留空则提醒/邮件走 Mock |
+| `BING_SEARCH_API_KEY` 等 | 可选；留空时景点搜索走 DuckDuckGo/Bing 爬虫兜底 |
+
+> 仍为敏感信息，**切勿提交 `.env`**（已在 `.gitignore`）。服务器上以环境变量或 secrets 注入。
+
+### 10.6 Docker 全栈（一键）
+
+仓库根目录 `docker-compose.yml` 已定义三个服务：`postgres`（数据库）、`backend`、`frontend`。
+
+```bash
+# 仅启动数据库（含 schema.sql / seed.sql 自动初始化）
+docker-compose up -d
+
+# 启动完整全栈（backend + frontend）
+docker-compose --profile full up -d
+```
+
+⚠️ **已知缺口**：`docker-compose.yml` 中 `backend` / `frontend` 服务分别引用了 `./backend/Dockerfile` 与 `./frontend/Dockerfile`，但**这两个文件当前尚未提供**，直接 `docker-compose --profile full up` 会在构建阶段失败。在补全这两个 Dockerfile 之前，建议使用 10.3 / 10.4 的**分离部署**方案。两文件补齐后可参考如下最小模板：
+
+```dockerfile
+# backend/Dockerfile（示例，待补）
+FROM python:3.11-slim
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install -r requirements.txt
+COPY . .
+EXPOSE 8000
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+```
+
+```dockerfile
+# frontend/Dockerfile（示例，待补）
+FROM node:20-alpine AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm install
+COPY . .
+RUN npm run build
+FROM nginx:alpine
+COPY --from=build /app/dist /usr/share/nginx/html
+# 另需将 10.4 的 Nginx 反代配置挂载进来
+```
+
+### 10.7 部署后验证
+
+1. 浏览器打开前端域名，能加载首页、可注册/登录；
+2. 调一个接口确认反代生效，例如打开 `https://your-domain.com/api/task/config` 应返回 JSON；
+3. 后端 `/docs` 可访问，说明服务健康。
 
 ---
 
