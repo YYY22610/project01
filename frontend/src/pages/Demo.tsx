@@ -140,6 +140,21 @@ export default function Demo() {
             )}
           </div>
 
+          <h2 className="text-lg font-semibold text-gray-800 mb-3">视频解说</h2>
+          <div className="mb-6">
+            <video
+              controls
+              className="w-full rounded-xl bg-gray-900"
+              style={{ aspectRatio: '16 / 9' }}
+              aria-label="任务演示视频"
+            >
+              <p className="text-center text-gray-300 py-12">
+                视频解说暂未上传，请阅读上方文字说明。
+              </p>
+            </video>
+            <p className="text-xs text-gray-400 mt-2 text-center">视频解说（待补充）</p>
+          </div>
+
           <label className="flex items-center gap-2 mb-6 cursor-pointer">
             <input
               type="checkbox"

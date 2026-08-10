@@ -152,20 +152,6 @@ export default function Register() {
                   </select>
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">技术使用频率</label>
-                  <select
-                    value={demographics.tech_frequency}
-                    onChange={(e) => setDemographics({ ...demographics, tech_frequency: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">请选择</option>
-                    <option value="rarely">很少使用</option>
-                    <option value="sometimes">偶尔使用</option>
-                    <option value="often">经常使用</option>
-                    <option value="daily">每天使用</option>
-                  </select>
-                </div>
-                <div className="col-span-2">
                   <label className="block text-xs font-medium text-gray-700 mb-1">AI工具使用经验</label>
                   <select
                     value={demographics.ai_experience}
@@ -177,6 +163,20 @@ export default function Register() {
                     <option value="basic">偶尔尝试</option>
                     <option value="intermediate">有一定经验</option>
                     <option value="advanced">熟练使用</option>
+                  </select>
+                </div>
+                <div className="col-span-2">
+                  <label className="block text-xs font-medium text-gray-700 mb-1">AI工具使用频率</label>
+                  <select
+                    value={demographics.tech_frequency}
+                    onChange={(e) => setDemographics({ ...demographics, tech_frequency: e.target.value })}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                  >
+                    <option value="">请选择</option>
+                    <option value="rarely">很少使用</option>
+                    <option value="sometimes">偶尔使用</option>
+                    <option value="often">经常使用</option>
+                    <option value="daily">每天使用</option>
                   </select>
                 </div>
               </div>

@@ -35,6 +35,26 @@ export default function AdminLogs() {
     })
   }
 
+  // 行为类型中文标签（覆盖后端 ActionType 枚举全部 16 种；未命中时回退英文原值）
+  const actionTypeLabel: Record<string, string> = {
+    page_view: '页面浏览',
+    search_query: '搜索查询',
+    search_result_click: '搜索结果点击',
+    document_edit: '文档编辑',
+    document_save: '文档保存',
+    document_download: '文档下载',
+    reminder_set: '设置提醒',
+    reminder_cancel: '取消提醒',
+    email_send: '发送邮件',
+    agent_message: 'AI对话',
+    agent_tool_call: 'AI工具调用',
+    checklist_toggle: '清单勾选',
+    task_start: '任务开始',
+    task_submit: '任务提交',
+    demo_view: '演示查看',
+    questionnaire_submit: '问卷提交',
+  }
+
   const actionTypes = [
     'page_view', 'search_query', 'search_result_click', 'document_edit', 'document_save',
     'reminder_set', 'email_send', 'agent_message', 'agent_tool_call', 'task_submit',
@@ -99,7 +119,7 @@ export default function AdminLogs() {
         />
         <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value)} className="px-3 py-2 border border-gray-300 rounded-lg text-sm">
           <option value="">全部操作</option>
-          {actionTypes.map((a) => <option key={a} value={a}>{a}</option>)}
+          {actionTypes.map((a) => <option key={a} value={a}>{actionTypeLabel[a] || a}</option>)}
         </select>
         <button onClick={handleSearch} className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700">搜索</button>
       </div>
@@ -149,7 +169,7 @@ export default function AdminLogs() {
                             <td className="px-4 py-3 text-sm text-gray-500 whitespace-nowrap">{new Date(log.timestamp).toLocaleString('zh-CN')}</td>
                             <td className="px-4 py-3 text-sm text-gray-800">{log.user_email || log.user_id}</td>
                             <td className="px-4 py-3 text-center">
-                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${actionColor(log.action_type)}`}>{log.action_type}</span>
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${actionColor(log.action_type)}`}>{actionTypeLabel[log.action_type] || log.action_type}</span>
                             </td>
                             <td className="px-4 py-3 text-sm text-gray-600">{log.phase || '-'}</td>
                             <td className="px-4 py-3 text-sm text-gray-600">{log.request_latency_ms ?? '-'}</td>
@@ -198,7 +218,7 @@ export default function AdminLogs() {
                 <div><span className="text-gray-500">日志ID:</span> <span className="text-gray-800">{selectedLog.id}</span></div>
                 <div><span className="text-gray-500">时间:</span> <span className="text-gray-800">{new Date(selectedLog.timestamp).toLocaleString('zh-CN')}</span></div>
                 <div><span className="text-gray-500">用户:</span> <span className="text-gray-800">{selectedLog.user_email || selectedLog.user_id}</span></div>
-                <div><span className="text-gray-500">操作类型:</span> <span className="text-gray-800">{selectedLog.action_type}</span></div>
+                <div><span className="text-gray-500">操作类型:</span> <span className="text-gray-800">{actionTypeLabel[selectedLog.action_type] || selectedLog.action_type}</span></div>
                 <div><span className="text-gray-500">阶段:</span> <span className="text-gray-800">{selectedLog.phase || '-'}</span></div>
                 <div><span className="text-gray-500">成败:</span> <span className="text-gray-800">{selectedLog.is_success === true ? '成功' : selectedLog.is_success === false ? '失败' : '-'}</span></div>
                 {selectedLog.agent_id && <div><span className="text-gray-500">助理ID:</span> <span className="text-gray-800">{selectedLog.agent_id}</span></div>}

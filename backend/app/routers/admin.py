@@ -581,6 +581,8 @@ async def list_submissions(
                 "user_id": str(user.id),
                 "email": user.email,
                 "group": user.group.value if user.group else None,
+                "status": user.status.value if user.status else None,
+                "created_at": user.created_at.isoformat() if user.created_at else None,
                 "task1_search": sub.task1_search,
                 "task2_document": sub.task2_document,
                 "task3_reminder": sub.task3_reminder,

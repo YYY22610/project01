@@ -325,7 +325,7 @@ export default function AdminParticipants() {
                     <div><span className="text-gray-400">年龄：</span><span className="text-gray-800 font-medium">{demoSource.age ?? '-'}</span></div>
                     <div><span className="text-gray-400">性别：</span><span className="text-gray-800 font-medium">{genderLabel(demoSource.gender)}</span></div>
                     <div><span className="text-gray-400">学历：</span><span className="text-gray-800 font-medium">{educationLabel(demoSource.education)}</span></div>
-                    <div><span className="text-gray-400">技术使用频率：</span><span className="text-gray-800 font-medium">{techFrequencyLabel(demoSource.tech_frequency)}</span></div>
+                    <div><span className="text-gray-400">AI工具使用频率：</span><span className="text-gray-800 font-medium">{techFrequencyLabel(demoSource.tech_frequency)}</span></div>
                     <div className="col-span-2"><span className="text-gray-400">AI工具使用经验：</span><span className="text-gray-800 font-medium">{aiExperienceLabel(demoSource.ai_experience)}</span></div>
                   </div>
                 </div>
