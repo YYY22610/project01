@@ -6,12 +6,12 @@ from datetime import datetime
 from typing import AsyncGenerator
 
 from app.services.document_service import generate_docx as _generate_docx
-from app.services.email_service import send_email as _send_email
+from app.services.email_service import send_email_async as _send_email_async
 from app.config import settings
 
 # 必须与 app/routers/document.py 的 UPLOAD_DIR 保持一致（backend/uploads/documents），
 # 否则 AI 生成的文件无法被 /api/document/download 找到而报 404。
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "documents")
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), "uploads", "documents")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
@@ -111,7 +111,7 @@ async def calculate_budget_tool(days: int, daily_budget: float) -> dict:
         "days": days,
         "daily_budget": daily_budget,
         "total": total,
-        "suggestion": "预算充足" if total <= 1000 else "预算可能超出，建议调整"
+        "suggestion": "预算充足" if total <= 2000 else "预算可能超出，建议调整"
     }
     return breakdown
 
@@ -134,7 +134,8 @@ async def set_reminder_tool(reminder_datetime: str, content: str, user_id: str |
 
 async def send_email_tool(to_email: str, subject: str, content: str) -> dict:
     """Send an email."""
-    result = _send_email(to_email, subject, content)
+    # 异步发送（内部线程池），避免同步 SMTP 阻塞事件循环
+    result = await _send_email_async(to_email, subject, content)
     return result
 
 

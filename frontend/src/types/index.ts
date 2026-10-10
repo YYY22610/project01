@@ -19,6 +19,22 @@ export interface User {
   education?: string
   tech_frequency?: string
   ai_experience?: string
+  pre_survey?: PreSurvey | null
+}
+
+// 实验前置问卷 10 题（与后端 schemas.auth.PreSurveySubmission 对应）
+export interface PreSurvey {
+  q1_used_gen_ai: string          // yes / no
+  q2_travel_experience: string    // domestic / abroad / both / never
+  q3_llm_frequency_6m: string     // never / rarely / sometimes / often / daily
+  q4_agent_awareness: string[]    // 多选：agent_principle / agent_openclaw / agent_built / agent_deployed / agent_helpful / none
+  q5_llm_duration: string         // lt_1m / m_1_3 / m_3_6 / gte_6m
+  q6_gender: string               // male / female
+  q7_age_range: string            // 18-24 / 25-34 / 35-44 / 45-54 / 55-64 / 65+
+  q8_education: string            // high_school / bachelor / master / phd
+  q9_marital: string              // married / unmarried
+  q10_occupation: string          // student / full_time / part_time / freelance / unemployed / retired / other
+  submitted_at?: string
 }
 
 export interface TaskConfig {
@@ -26,6 +42,7 @@ export interface TaskConfig {
   task_budget: number
   target_email: string
   destination: string
+  travelers: string
   sub_tasks: string[]
 }
 

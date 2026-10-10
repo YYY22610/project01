@@ -199,16 +199,19 @@ def _clean_text(text: str) -> str:
 
 
 async def web_search(keyword: str, num: int = 10) -> list[dict[str, Any]]:
-    """DuckDuckGo first, Bing fallback."""
+    """Bing first (fast in CN ~0.7s), DuckDuckGo fallback.
+
+    实测（2026-08，国内网络）：Bing 网页版 ~0.7s 且中文结果更优；
+    DDG html.duckduckgo.com 需要 ~10s 且经常超时返回空。故调换优先级。
+    """
     if not keyword or not keyword.strip():
         return []
     keyword = keyword.strip()
 
-    results = await _ddg_search(keyword, num=num)
-    if len(results) <= 1:
-        bing_results = await _bing_search(keyword, num=num)
-        if bing_results and not (len(bing_results) == 1 and bing_results[0].get("title") == "搜索请求失败"):
-            results = bing_results
-        elif not results:
-            results = bing_results
+    results = await _bing_search(keyword, num=num)
+    # Bing 失败占位（搜索请求失败）或空结果（未找到相关结果）时，回退 DDG
+    if not results or (len(results) == 1 and results[0].get("title") in ("搜索请求失败", "未找到相关结果")):
+        ddg = await _ddg_search(keyword, num=num)
+        if ddg:
+            results = ddg
     return results

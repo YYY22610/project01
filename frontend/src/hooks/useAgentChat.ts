@@ -28,7 +28,7 @@ export function useAgentChat(agentId: string) {
 
     // Start streaming — 本轮重置状态日志
     setStreaming(agentId, true)
-    setStatusText(agentId, '正在思考如何帮你完成行程规划任务…')
+    setStatusText(agentId, '正在思考如何帮你完成旅游攻略任务…')
 
     // Accumulate assistant response
     let assistantContent = ''

@@ -14,7 +14,8 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIGS = [
     ("task_days", "3", "旅行天数"),
-    ("task_budget", "1000", "旅行预算(元)"),
+    ("task_budget", "2000", "旅行预算(元)"),
+    ("task_travelers", "1 人", "出行人数"),
     ("target_email", "experiment@example.com", "收件邮箱"),
     ("destination", "杭州", "目的地"),
     ("target_sample_size", "100", "目标样本量"),
@@ -25,8 +26,8 @@ DEFAULT_CONFIGS = [
 
 # 问卷题项说明：
 # - 元组结构: (构念, 题干, 题型, 量表级数, 排序, 选项, 适用分组)
-# - 适用分组: "ALL"=所有人; "SOA,MOA"=仅 AI 助理组; "H"=仅纯人工组
-# - 单盲设计：H 组题项改写为"工具/方法"评价，SOA/MOA 组保留 AI 助理表述；
+# - 适用分组: "ALL"=所有人; "MOA"=仅 AI 助理组; "H"=仅纯人工组
+# - 单盲设计：H 组题项改写为"工具/方法"评价，MOA 组保留 AI 助理表述；
 #   task_load 与 manipulation_check 为各组共用。
 DEFAULT_QUESTIONS = [
     # ===== 共用：任务负荷 (NASA-TLX) =====

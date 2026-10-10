@@ -26,10 +26,16 @@ class Settings(BaseSettings):
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin123"
 
+    # 运行环境：dev / production。非 dev 环境将强制要求显式配置强密钥，防止默认值上线。
+    APP_ENV: str = "dev"
+
     # LLM
     LLM_API_KEY: str = ""
     LLM_API_BASE_URL: str = "https://api.openai.com/v1"
     LLM_MODEL: str = "gpt-4o-mini"
+    # 是否允许使用 Mock LLM。开发/自测时可留 True；正式收实验数据前设 False，
+    # 此时若 LLM_API_KEY 为空将拒绝启动（防止用 Mock 的虚假回答污染数据）。
+    ALLOW_MOCK_LLM: bool = True
 
     # Email
     # 发信后端：smtp / resend / mock（留空则按「有 SMTP 配置→有 Resend key→mock」自动选择）
@@ -48,6 +54,9 @@ class Settings(BaseSettings):
     # Search
     BING_SEARCH_API_KEY: str = ""
     GOOGLE_SEARCH_API_KEY: str = ""
+    # MOA 群辩搜索增强：主持人整合方案前自动联网搜索（DuckDuckGo 网页版抓取，免 Key），
+    # 把真实网页摘要注入整合 prompt，让价格/营业时间有据可依。演示环境网络不稳可设 false 关闭。
+    SEARCH_ENHANCE: bool = True
 
     # CORS
     CORS_ORIGINS: str = "http://localhost:5173,http://localhost:3000"
@@ -62,3 +71,28 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+# 安全启动校验：非 dev 环境必须显式配置强密钥与管理员口令，杜绝默认值/弱密钥上线。
+# 默认 SECRET_KEY 是公开值，若在生产环境沿用，任何人可伪造管理员 JWT 并接管系统。
+if settings.APP_ENV != "dev":
+    if (
+        not settings.SECRET_KEY
+        or settings.SECRET_KEY == "dev-secret-key-change-in-production"
+        or len(settings.SECRET_KEY) < 32
+    ):
+        raise RuntimeError(
+            "生产环境必须显式配置 SECRET_KEY（长度 ≥ 32 的随机字符串，如 "
+            "`python -c \"import secrets; print(secrets.token_hex(32))\"`），"
+            "禁止使用默认密钥，否则任何人可伪造管理员 JWT。"
+        )
+    if not settings.ADMIN_PASSWORD or settings.ADMIN_PASSWORD == "admin123":
+        raise RuntimeError("生产环境必须显式配置 ADMIN_PASSWORD，禁止使用默认口令。")
+
+# 实验模式禁止 Mock：当显式关闭 ALLOW_MOCK_LLM 时，若没有真实 Key，
+# 禁止以 Mock 启动——否则会向实验数据注入虚假 AI 回答，污染结论。
+# 该约束与运行环境无关：开发环境只要显式设 ALLOW_MOCK_LLM=false 也会生效。
+if not settings.ALLOW_MOCK_LLM and settings.use_mock_llm:
+    raise RuntimeError(
+        "当前配置 ALLOW_MOCK_LLM=false（实验模式禁止 Mock LLM），但 LLM_API_KEY 为空，"
+        "使用 Mock 会向实验数据注入虚假的 AI 回答。请配置真实 LLM_API_KEY 后再启动。"
+    )

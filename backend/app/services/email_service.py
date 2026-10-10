@@ -195,3 +195,21 @@ def send_email(
     # mock
     logger.warning("未配置任何真实邮件后端 — 邮件将 mock 发送（不真正发出）")
     return {"status": "mock_sent", "message_id": None}
+
+
+async def send_email_async(
+    to_email: str,
+    subject: str,
+    content: str,
+    attachment_paths: list[str] | None = None,
+) -> dict:
+    """异步发送邮件：同步 SMTP/Resend 阻塞调用放入线程池，避免阻塞事件循环。
+
+    同步 send_email 的 SMTP 握手/发送最长可达 30s（SMTP timeout），
+    在 async 上下文直接调用会卡住整个服务进程的其它请求。
+    """
+    import asyncio
+
+    return await asyncio.to_thread(
+        send_email, to_email, subject, content, attachment_paths
+    )

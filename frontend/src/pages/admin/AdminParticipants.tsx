@@ -79,7 +79,7 @@ export default function AdminParticipants() {
   }
   const groupColor = (g: string) => {
     if (g === 'H') return 'bg-blue-100 text-blue-700'
-    if (g === 'SOA') return 'bg-green-100 text-green-700'
+    if (g === 'SOA') return 'bg-emerald-100 text-emerald-700'
     if (g === 'MOA') return 'bg-purple-100 text-purple-700'
     return 'bg-gray-100 text-gray-600'
   }

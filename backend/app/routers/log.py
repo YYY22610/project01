@@ -52,6 +52,7 @@ async def batch_create_logs(
     """
     created = 0
     failed = 0
+    logs_to_add: list[BehaviorLog] = []
     for log_data in req.logs:
         try:
             action_type = ActionType(log_data.action_type)
@@ -89,15 +90,18 @@ async def batch_create_logs(
                 ai_suggestion_type=_safe(log_data.ai_suggestion_type, _STR_LIMITS["ai_suggestion_type"]),
                 ai_interaction_rounds=log_data.ai_interaction_rounds,
             )
-            db.add(log)
+            logs_to_add.append(log)
             created += 1
         except Exception:
-            # 任何单条构造/约束异常都只跳过本条，不影响其它日志与整体响应
+            # 任何单条构造异常都只跳过本条，不影响其它日志与整体响应。
+            # 注意：这里绝不能在循环内 rollback——对象尚未进入 session，
+            # rollback 会把之前已 add 的整批日志一起丢弃（原实现 bug）。
             failed += 1
-            await db.rollback()
             continue
 
-    await db.commit()
+    if logs_to_add:
+        db.add_all(logs_to_add)
+        await db.commit()
     return {"created": created, "failed": failed, "status": "ok"}
 
 

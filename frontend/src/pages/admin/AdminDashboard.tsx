@@ -50,7 +50,7 @@ export default function AdminDashboard() {
   const targetPerGroup = Math.ceil(stats.total_participants / 3)
   const groups = [
     { key: 'H', label: 'H组（纯人工）', color: 'bg-blue-500', count: stats.group_distribution?.H || 0 },
-    { key: 'SOA', label: 'SOA组（单AI）', color: 'bg-green-500', count: stats.group_distribution?.SOA || 0 },
+    { key: 'SOA', label: 'SOA组（单AI）', color: 'bg-emerald-500', count: stats.group_distribution?.SOA || 0 },
     { key: 'MOA', label: 'MOA组（多AI）', color: 'bg-purple-500', count: stats.group_distribution?.MOA || 0 },
   ]
 

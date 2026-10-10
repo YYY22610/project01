@@ -34,7 +34,10 @@ interface UserStore {
   login: (email: string, password: string) => Promise<void>
   loginByEmail: (email: string) => Promise<void>
   logout: () => void
-  consent: () => Promise<void>
+  consent: (agreed: boolean, survey: {
+    q1: string; q2: string; q3: string; q4: string[]; q5: string;
+    q6: string; q7: string; q8: string; q9: string; q10: string;
+  }) => Promise<void>
   updateDemographics: (data: any) => Promise<void>
   fetchMe: () => Promise<void>
   fetchTaskConfig: () => Promise<void>
@@ -129,10 +132,10 @@ export const useUserStore = create<UserStore>((set, get) => ({
     set({ user: null, token: null, taskConfig: null, taskStatus: null })
   },
 
-  consent: async () => {
+  consent: async (agreed, survey) => {
     set({ loading: true, error: null })
     try {
-      const res = await authApi.consent()
+      const res = await authApi.consent(agreed, survey)
       if (res.data?.access_token) {
         localStorage.setItem('access_token', res.data.access_token)
         set({ token: res.data.access_token })

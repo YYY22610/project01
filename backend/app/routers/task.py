@@ -1,4 +1,5 @@
 """Task router: task config, start task, submit task."""
+import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, delete
@@ -14,6 +15,31 @@ from app.schemas.task import TaskConfigResponse, TaskStartResponse, TaskSubmitRe
 from app.services.state_machine import transition_status
 
 router = APIRouter()
+
+# 参与者可提交的 docx 目录（与 document.py 生成目录一致）
+_DOCS_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "documents")
+)
+
+
+def _validate_docx_path(path: str | None) -> str | None:
+    """防任意路径写入：docx_file_path 只能是生成目录内的 .docx 文件。
+
+    参与者提交的路径会被管理员下载接口直接读取，
+    若不校验，可传 /etc/passwd、/app/config.py 等任意服务端路径导致任意文件泄露。
+    """
+    if not path:
+        return None
+    p = os.path.abspath(path)
+    if not p.lower().endswith(".docx"):
+        raise HTTPException(status_code=400, detail="无效的文档路径")
+    try:
+        inside = os.path.commonpath([p, _DOCS_DIR]) == _DOCS_DIR
+    except ValueError:  # 不同盘符等异常路径
+        inside = False
+    if not inside:
+        raise HTTPException(status_code=400, detail="无效的文档路径")
+    return p
 
 
 async def _get_config_value(db: AsyncSession, key: str, default: str = "") -> str:
@@ -43,15 +69,17 @@ async def reset_flow(user: User = Depends(get_current_user), db: AsyncSession = 
 async def get_task_config(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
     """Get task configuration — reads from system_config table."""
     task_days = int(await _get_config_value(db, "task_days", "3"))
-    task_budget = int(await _get_config_value(db, "task_budget", "1000"))
+    task_budget = int(await _get_config_value(db, "task_budget", "2000"))
     target_email = await _get_config_value(db, "target_email", "experiment@example.com")
     destination = await _get_config_value(db, "destination", "杭州")
+    travelers = await _get_config_value(db, "task_travelers", "1 人")
 
     return TaskConfigResponse(
         task_days=task_days,
         task_budget=task_budget,
         target_email=target_email,
         destination=destination,
+        travelers=travelers,
         sub_tasks=[
             f"搜索{destination}景点信息",
             f"生成{task_days}日游行程Word文档",
@@ -129,7 +157,7 @@ async def submit_task(
     submission.task2_document = req.task2_document
     submission.task3_reminder = req.task3_reminder
     submission.task4_email = req.task4_email
-    submission.docx_file_path = req.docx_file_path
+    submission.docx_file_path = _validate_docx_path(req.docx_file_path)
     submission.reminder_datetime = req.reminder_datetime
     submission.email_status = req.email_status
     submission.email_recipient = req.email_recipient

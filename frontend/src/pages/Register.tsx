@@ -5,26 +5,10 @@ import { useUserStore } from '../stores/userStore'
 export default function Register() {
   const [isLogin, setIsLogin] = useState(true)
   const [email, setEmail] = useState('')
-  const [demographics, setDemographics] = useState({
-    age: '',
-    gender: '',
-    education: '',
-    tech_frequency: '',
-    ai_experience: '',
-  })
+  const [password, setPassword] = useState('')
   const [error, setError] = useState('')
-  const { register, loginByEmail, updateDemographics, loading } = useUserStore()
+  const { register, loginByEmail, loading } = useUserStore()
   const navigate = useNavigate()
-
-  const validateDemographics = () => {
-    return (
-      demographics.age &&
-      demographics.gender &&
-      demographics.education &&
-      demographics.tech_frequency &&
-      demographics.ai_experience
-    )
-  }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -37,30 +21,24 @@ export default function Register() {
 
     try {
       if (isLogin) {
+        // 邮箱直登（实验平台免密登录）
         await loginByEmail(email)
-        // 登录后根据当前实验状态跳转：重置过或新用户走知情同意，否则继续任务
+        // 登录后根据当前实验状态跳转：registered → /consent（新合并页），其他 → 继续后续流程
         const status = useUserStore.getState().user?.status
-        navigate(status === 'consented' ? '/consent' : '/task')
-      } else {
-        if (!validateDemographics()) {
-          setError('请完整填写基本信息')
-          return
+        if (status === 'registered') {
+          navigate('/consent')
+        } else {
+          navigate('/demo')
         }
+      } else {
+        // 注册：仅邮箱（基本信息将在「知情同意」页统一收集）
         await register(email)
-        await updateDemographics({
-          age: parseInt(demographics.age),
-          gender: demographics.gender,
-          education: demographics.education,
-          tech_frequency: demographics.tech_frequency,
-          ai_experience: demographics.ai_experience,
-        })
         navigate('/consent')
       }
     } catch (e: any) {
       const detail = e.response?.data?.detail
       if (detail) {
         // 双向智能引导：邮箱已注册则引导去登录，未注册则引导去注册
-        // （避免用户想登录却误点「注册」、因邮箱已存在而失败、导致仍停留在旧账号会话）
         if (!isLogin && detail.includes('已注册')) {
           setError('该邮箱已注册，请使用下方「去登录」以已有账号进入')
           setIsLogin(true)
@@ -109,79 +87,10 @@ export default function Register() {
             />
           </div>
 
-          {!isLogin && (
-            <div className="border-t border-gray-200 pt-4">
-              <h2 className="text-base font-semibold text-gray-800 mb-3">基本信息采集</h2>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">年龄</label>
-                  <input
-                    type="number"
-                    value={demographics.age}
-                    onChange={(e) => setDemographics({ ...demographics, age: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                    placeholder="如 22"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">性别</label>
-                  <select
-                    value={demographics.gender}
-                    onChange={(e) => setDemographics({ ...demographics, gender: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">请选择</option>
-                    <option value="male">男</option>
-                    <option value="female">女</option>
-                    <option value="other">其他</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">学历</label>
-                  <select
-                    value={demographics.education}
-                    onChange={(e) => setDemographics({ ...demographics, education: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">请选择</option>
-                    <option value="high_school">高中及以下</option>
-                    <option value="college">大专</option>
-                    <option value="bachelor">本科</option>
-                    <option value="master">硕士</option>
-                    <option value="phd">博士</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-xs font-medium text-gray-700 mb-1">AI工具使用经验</label>
-                  <select
-                    value={demographics.ai_experience}
-                    onChange={(e) => setDemographics({ ...demographics, ai_experience: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">请选择</option>
-                    <option value="none">从未使用</option>
-                    <option value="basic">偶尔尝试</option>
-                    <option value="intermediate">有一定经验</option>
-                    <option value="advanced">熟练使用</option>
-                  </select>
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-xs font-medium text-gray-700 mb-1">AI工具使用频率</label>
-                  <select
-                    value={demographics.tech_frequency}
-                    onChange={(e) => setDemographics({ ...demographics, tech_frequency: e.target.value })}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
-                  >
-                    <option value="">请选择</option>
-                    <option value="rarely">很少使用</option>
-                    <option value="sometimes">偶尔使用</option>
-                    <option value="often">经常使用</option>
-                    <option value="daily">每天使用</option>
-                  </select>
-                </div>
-              </div>
-            </div>
-          )}
+          <p className="text-xs text-gray-500 leading-relaxed">
+            实验平台支持免密登录，仅需输入注册邮箱即可进入。
+            登录后将进入「知情同意与基本信息」页面，请完整填写后再开始任务。
+          </p>
 
           {error && <p className="text-red-500 text-sm">{error}</p>}
 

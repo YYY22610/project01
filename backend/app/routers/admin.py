@@ -533,10 +533,26 @@ async def download_participant_docx(
 
     result = await db.execute(select(TaskSubmission).where(TaskSubmission.user_id == user_id))
     submission = result.scalar_one_or_none()
-    if not submission or not submission.docx_file_path or not os.path.exists(submission.docx_file_path):
+    if not submission or not submission.docx_file_path:
         raise HTTPException(status_code=404, detail="文档不存在")
 
-    file_path = submission.docx_file_path
+    # 防御纵深：即使 DB 中存在历史脏数据（修复前被写入的任意路径），
+    # 也只允许下载生成目录内的 .docx，杜绝任意文件读取。
+    docs_dir = os.path.abspath(
+        os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "documents")
+    )
+    file_path = os.path.abspath(submission.docx_file_path)
+    try:
+        inside_docs = os.path.commonpath([file_path, docs_dir]) == docs_dir
+    except ValueError:
+        inside_docs = False
+    if (
+        not inside_docs
+        or not file_path.lower().endswith(".docx")
+        or not os.path.exists(file_path)
+    ):
+        raise HTTPException(status_code=404, detail="文档不存在")
+
     return FileResponse(
         file_path,
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -825,6 +841,7 @@ async def export_participants(admin: dict = Depends(get_current_admin), db: Asyn
     users = result.scalars().all()
 
     output = io.StringIO()
+    output.write("\ufeff")  # UTF-8 BOM：避免 Windows Excel 打开时中文列乱码
     writer = csv.writer(output)
     writer.writerow(["ID", "Email", "Group", "Status", "Age", "Gender", "Education",
                      "Tech_Frequency", "AI_Experience", "Created_At", "Task_Start", "Task_End"])
@@ -857,6 +874,7 @@ async def export_logs(admin: dict = Depends(get_current_admin), db: AsyncSession
     rows = result.all()
 
     output = io.StringIO()
+    output.write("\ufeff")  # UTF-8 BOM：避免 Windows Excel 打开时中文列乱码
     writer = csv.writer(output)
     writer.writerow(["Log_ID", "User_ID", "Email", "Group", "Timestamp", "Action_Type",
                      "Action_Target", "Input_Content", "Page_Path", "Agent_ID",
@@ -899,6 +917,7 @@ async def export_scores(admin: dict = Depends(get_current_admin), db: AsyncSessi
     rows = result.all()
 
     output = io.StringIO()
+    output.write("\ufeff")  # UTF-8 BOM：避免 Windows Excel 打开时中文列乱码
     writer = csv.writer(output)
     writer.writerow([
         "Score_ID", "User_ID", "Email", "Group",
@@ -999,7 +1018,7 @@ async def export_all(
 ):
     """Export a combined CSV joining participants + submissions + scores + questionnaire.
 
-    Supports `group` filter (H / SOA / MOA) for per-group SPSS export (需求5.3).
+    Supports `group` filter (H / MOA) for per-group SPSS export (需求5.3).
     """
     query = (
         select(User, TaskSubmission, AdminScore)
@@ -1014,6 +1033,7 @@ async def export_all(
     q_scores = await _compute_questionnaire_scores(db)
 
     output = io.StringIO()
+    output.write("\ufeff")  # UTF-8 BOM：避免 Windows Excel 打开时中文列乱码
     writer = csv.writer(output)
     writer.writerow([
         "Email", "Group", "Status", "Age", "Gender", "Education",
@@ -1103,7 +1123,7 @@ async def export_all_xlsx(
 ):
     """Export experiment data as Excel (.xlsx) with three sheets: 汇总 / 行为日志 / 评分.
 
-    Supports `group` filter (H / SOA / MOA) and includes questionnaire scores (需求5.3).
+    Supports `group` filter (H / MOA) and includes questionnaire scores (需求5.3).
     """
     from openpyxl import Workbook
     from openpyxl.styles import Font, PatternFill, Alignment

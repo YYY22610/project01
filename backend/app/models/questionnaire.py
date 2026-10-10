@@ -36,8 +36,8 @@ class QuestionnaireItem(Base):
     scale_level: Mapped[int] = mapped_column(Integer, default=5)  # 5-point or 7-point Likert
     sort_order: Mapped[int] = mapped_column(Integer, default=0)
     is_active: Mapped[bool] = mapped_column(default=True)
-    # 适用性分组：逗号分隔的组列表（如 "SOA,MOA"）；NULL / "ALL" 表示适用于所有组
-    # 用于单盲设计下按实验组展示不同问卷（H 组改写为"工具/方法"评价，SOA/MOA 保留 AI 助理相关表述）
+    # 适用性分组：逗号分隔的组列表（如 "MOA"）；NULL / "ALL" 表示适用于所有组
+    # 用于单盲设计下按实验组展示不同问卷（H 组改写为"工具/方法"评价，MOA 保留 AI 助理相关表述）
     applicable_groups: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())

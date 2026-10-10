@@ -2,7 +2,7 @@
 import enum
 import uuid
 from datetime import datetime
-from sqlalchemy import String, Integer, Text, DateTime, func, Enum as SAEnum
+from sqlalchemy import String, Integer, Text, DateTime, func, Enum as SAEnum, JSON
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -10,9 +10,9 @@ from app.database import Base
 
 
 class ExperimentGroup(str, enum.Enum):
-    H = "H"           # 纯人工组
-    SOA = "SOA"       # 单AI助理组
-    MOA = "MOA"       # 多AI助理组
+    H = "H"           # 纯人工组（说明书 A 组）
+    SOA = "SOA"       # 单智能体助理组（原设计，现恢复）
+    MOA = "MOA"       # 智能体助理组（说明书 B 组）
 
 
 class UserStatus(str, enum.Enum):
@@ -46,6 +46,10 @@ class User(Base):
     education: Mapped[str | None] = mapped_column(String(50), nullable=True)
     tech_frequency: Mapped[str | None] = mapped_column(String(50), nullable=True)
     ai_experience: Mapped[str | None] = mapped_column(String(50), nullable=True)
+
+    # 实验前置问卷（10 题）原始答案，存为 JSON
+    # 字段名沿用 SQLAlchemy Column.name="pre_survey" 避免与 UserStatus 保留名冲突
+    pre_survey: Mapped[dict | None] = mapped_column("pre_survey", JSON, nullable=True)
 
     # Demo
     demo_watch_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)

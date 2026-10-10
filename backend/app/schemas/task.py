@@ -9,6 +9,7 @@ class TaskConfigResponse(BaseModel):
     task_budget: int
     target_email: str
     destination: str
+    travelers: str
     sub_tasks: list[str]
 
 

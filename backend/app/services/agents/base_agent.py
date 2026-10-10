@@ -2,8 +2,8 @@
 import json
 import re
 from typing import AsyncGenerator
-from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import async_session_factory
 from app.services.agents.llm_client import get_llm_client
 from app.services.agents.tools.agent_tools import (
     TOOL_DEFINITIONS,
@@ -31,9 +31,20 @@ class BaseAgent:
         self,
         user_id: str,
         message: str,
-        db: AsyncSession,
         cancel_check: "callable[[], bool] | None" = None,
     ) -> AsyncGenerator[dict, None]:
+        """
+        Chat with the agent. Yields SSE events as dict chunks.
+        Flow: user message → LLM → (tool_call → execute → LLM)* → final response
+
+        :param cancel_check: 返回 True 表示参与者已请求中断本轮，命中则立即终止
+                              （用于干预能力：参与者随时中断助理当前操作）。
+
+        注意：本方法不再接收外部长生命周期会话。DB 读写集中在「存用户消息 /
+        读历史 / 存助手消息」三处短操作，各自开短会话用完即关并立即提交。
+        这样 SSE 流在整场 LLM 多轮对话（可能持续数分钟）期间不会占用连接池，
+        避免多用户并发时连接池被长占耗尽导致平台整体阻塞。
+        """
         """
         Chat with the agent. Yields SSE events as dict chunks.
         Flow: user message → LLM → (tool_call → execute → LLM)* → final response
@@ -48,28 +59,30 @@ class BaseAgent:
                 return False
             return bool(await cancel_check())
 
-        # 1. Save user message
-        user_msg = ChatMessage(
-            user_id=user_id,
-            agent_id=self.agent_id,
-            role="user",
-            content=message,
-        )
-        db.add(user_msg)
-        await db.flush()
+        # 1. Save user message（短会话：存完即提交并释放连接）
+        async with async_session_factory() as db:
+            user_msg = ChatMessage(
+                user_id=user_id,
+                agent_id=self.agent_id,
+                role="user",
+                content=message,
+            )
+            db.add(user_msg)
+            await db.commit()
 
         # 2. Build message history
         messages = [{"role": "system", "content": self.system_prompt}]
 
-        # Load recent history (last 10 messages)
+        # Load recent history (last 10 messages)（短会话：读完即释放）
         from sqlalchemy import select
-        result = await db.execute(
-            select(ChatMessage)
-            .where(ChatMessage.user_id == user_id, ChatMessage.agent_id == self.agent_id)
-            .order_by(ChatMessage.created_at.desc())
-            .limit(10)
-        )
-        history = list(reversed(result.scalars().all()))
+        async with async_session_factory() as db:
+            result = await db.execute(
+                select(ChatMessage)
+                .where(ChatMessage.user_id == user_id, ChatMessage.agent_id == self.agent_id)
+                .order_by(ChatMessage.created_at.desc())
+                .limit(10)
+            )
+            history = list(reversed(result.scalars().all()))
         for msg in history:
             messages.append({"role": msg.role, "content": msg.content or ""})
 
@@ -181,13 +194,14 @@ class BaseAgent:
         for token in tokens:
             yield {"type": "content", "data": token}
 
-        # 6. Save assistant message
-        assistant_msg = ChatMessage(
-            user_id=user_id,
-            agent_id=self.agent_id,
-            role="assistant",
-            content=final_content,
-            tool_calls={"tool_calls": tool_calls} if tool_calls else None,
-        )
-        db.add(assistant_msg)
-        await db.commit()
+        # 6. Save assistant message（短会话：存完即提交并释放连接）
+        async with async_session_factory() as db:
+            assistant_msg = ChatMessage(
+                user_id=user_id,
+                agent_id=self.agent_id,
+                role="assistant",
+                content=final_content,
+                tool_calls={"tool_calls": tool_calls} if tool_calls else None,
+            )
+            db.add(assistant_msg)
+            await db.commit()

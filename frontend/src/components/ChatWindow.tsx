@@ -3,32 +3,18 @@ import { useAgentChat } from '../hooks/useAgentChat'
 import { useBehaviorLogger } from '../hooks/useBehaviorLogger'
 import { useUserStore } from '../stores/userStore'
 import ReactMarkdown from 'react-markdown'
-import { api } from '../services/api'
-import { Sparkles, Send, Check, Square, Ban, LogIn, FileDown } from 'lucide-react'
+import remarkGfm from 'remark-gfm'
+import { Sparkles, Send, Check, Square, Ban, LogIn } from 'lucide-react'
 import type { ToolActivity } from '../stores/chatStore'
+import { normalizeMarkdown } from '../utils/markdown'
+
+// Markdown 归一化见 utils/markdown：
+// 统一处理 || 拼接表格行、落单 **、独立 --- 分隔行、``` 围栏。
+// 该函数是纯字符串变换，SSE 流式下每帧都对完整累积文本重新处理（m.content + delta），
+// 不是在上帧结果上叠加，故流式中途不会出现标记丢失。
 
 /** 引导词：按助理 + 对话阶段（开场/推进/收尾）切换，点击即发送，帮助推进攻略流程 */
 const SUGGESTION_SETS: Record<string, { start: string[]; progress: string[]; done: string[] }> = {
-  soa: {
-    start: [
-      '我想安排休闲一点的 3 日游',
-      '我预算紧，控制在 1000 元以内',
-      '带老人小孩，不要太累',
-      '我更爱自然风光和美食',
-    ],
-    progress: [
-      '这个方案不错，把第二天调轻松些',
-      '帮我算一下目前总预算',
-      '多推荐几个西湖周边免费景点',
-      '住宿和交通大概花多少',
-    ],
-    done: [
-      '就按这个生成 Word 攻略',
-      '把攻略导出成 Word 文档',
-      '给我设个出发前提醒',
-      '把攻略发到我邮箱',
-    ],
-  },
   moa_a: {
     start: [
       '帮我搜杭州经典必游景点',
@@ -50,7 +36,7 @@ const SUGGESTION_SETS: Record<string, { start: string[]; progress: string[]; don
   moa_b: {
     start: [
       '根据已有景点帮我排 3 天行程',
-      '做一份预算 1000 内的行程',
+      '做一份预算 2000 内的行程',
       '我要休闲不赶的节奏',
       '把住宿和交通也排进去',
     ],
@@ -61,74 +47,38 @@ const SUGGESTION_SETS: Record<string, { start: string[]; progress: string[]; don
       '加入几个必吃的美食点',
     ],
     done: [
-      '就按这个生成 Word 攻略',
-      '把攻略导出成 Word 文档',
-      '顺便算下预算是否超 1000',
+      '顺便算下预算是否超 2000',
+    ],
+  },
+  soa: {
+    start: [
+      '帮我搜杭州经典必游景点',
+      '有哪些免费又值得去的景点',
+      '西湖周边有什么好逛的',
+      '适合单人轻松游的路线',
+    ],
+    progress: [
+      '根据景点帮我排 3 天行程，预算控制在 2000 内',
+      '把住宿和市内交通也排进去',
+      '帮我算一下 3 天总预算是否超 2000',
+      '加入几个必吃的杭州美食点',
+    ],
+    done: [
+      '顺便帮我把行程设置成提醒',
     ],
   },
 }
 
-/** 文档下载按钮：浏览器直接点 <a> 不会带 JWT，因此用 axios 取 blob 后触发下载 */
-function DocxDownloadButton({ href }: { href: string }) {
-  const [downloading, setDownloading] = useState(false)
-
-  const handleClick = async (e: React.MouseEvent) => {
-    e.preventDefault()
-    setDownloading(true)
-    try {
-      // api 实例 baseURL 已是 /api，href 若带 /api 前缀需去掉，避免拼成 /api/api/document/...
-      const path = href.startsWith('/api/') ? href.slice(4) : href
-      const response = await api.get(path, { responseType: 'blob' })
-      const blob = new Blob([response.data], {
-        type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      })
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = decodeURIComponent(href.split('/').pop() || 'document.docx')
-      document.body.appendChild(a)
-      a.click()
-      a.remove()
-      window.URL.revokeObjectURL(url)
-    } catch (err: any) {
-      // eslint-disable-next-line no-console
-      console.error('Docx download failed', 'href=', href, 'status=', err?.response?.status, err?.response?.data, err?.message)
-      const status = err?.response?.status ?? 'network'
-      // blob 形式的错误响应需要手动读文本才能展示 detail
-      let detail = ''
-      if (err?.response?.data instanceof Blob) {
-        try {
-          detail = await err.response.data.text()
-        } catch {
-          detail = '(无法读取错误详情)'
-        }
-      } else if (typeof err?.response?.data === 'string') {
-        detail = err.response.data
-      } else if (err?.response?.data?.detail) {
-        detail = err.response.data.detail
-      }
-      alert(`文档下载失败 [${status}]\n请求文件: ${decodeURIComponent(href.split('/').pop() || '')}\n${detail || err?.message || '请确认已登录后重试'}`)
-    } finally {
-      setDownloading(false)
-    }
-  }
-
-  return (
-    <button
-      onClick={handleClick}
-      disabled={downloading}
-      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-blue-600 text-white text-xs font-medium hover:bg-blue-700 disabled:opacity-60 transition"
-    >
-      <FileDown size={14} />
-      {downloading ? '下载中…' : '点击下载 Word 文档'}
-    </button>
-  )
-}
-
-/** ReactMarkdown 链接渲染：仅对 /api/document/download/ 开头的链接做 JWT 下载 */
+/** ReactMarkdown 链接渲染：对受 JWT 保护的文档下载链接禁用点击，
+ *  AI 助手不再提供「下载文档」功能（下载请使用右侧「生成 Word」按钮）。 */
 function MarkdownLink({ href, children, ...rest }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
   if (typeof href === 'string' && href.startsWith('/api/document/download/')) {
-    return <DocxDownloadButton href={href} />
+    const fileName = decodeURIComponent(href.split('/').pop() || '文档')
+    return (
+      <span className="text-gray-500 italic" title="AI 助手暂不支持直接下载文档">
+        {children || fileName}
+      </span>
+    )
   }
   return (
     <a href={href} target="_blank" rel="noopener noreferrer" {...rest}>
@@ -142,6 +92,8 @@ interface ChatWindowProps {
   className?: string
   /** 当用户使用 AI 助手（发送任意消息）时触发，用于在任务进度中标记"搜索景点"完成 */
   onAIMessageSent?: () => void
+  /** 当 AI 完成一条 assistant 回复时触发，父组件可用于提取行程方案 */
+  onAssistantMessage?: (content: string) => void
 }
 
 /** 单个工具调用步骤：调用中转圈，完成后绿勾，中断时红叉 */
@@ -215,7 +167,7 @@ function AgentStatusPanel({
             )}
             {cancelled
               ? (thinkingText || '操作已被你中断，请重新下达指令。')
-              : (thinkingText || '正在思考如何帮你完成行程规划任务…')}
+              : (thinkingText || '正在思考如何帮你完成旅游攻略任务…')}
           </div>
         )}
       </div>
@@ -223,7 +175,7 @@ function AgentStatusPanel({
   )
 }
 
-export default function ChatWindow({ agentId, className = '', onAIMessageSent }: ChatWindowProps) {
+export default function ChatWindow({ agentId, className = '', onAIMessageSent, onAssistantMessage }: ChatWindowProps) {
   const { messages, isStreaming, toolActivity, statusText, cancelled, sendMessage, cancel, loading, error, needsRelogin } = useAgentChat(agentId)
   const { log } = useBehaviorLogger()
   const logout = useUserStore((s) => s.logout)
@@ -232,6 +184,15 @@ export default function ChatWindow({ agentId, className = '', onAIMessageSent }:
   const isAtBottomRef = useRef(true)
   const userScrollingRef = useRef(false)
   const scrollTimerRef = useRef<number | null>(null)
+
+  // 流式结束后把最终 assistant 回复抛给父组件，用于方案面板展示
+  useEffect(() => {
+    if (isStreaming) return
+    const last = messages[messages.length - 1]
+    if (last && last.role === 'assistant' && last.content) {
+      onAssistantMessage?.(last.content)
+    }
+  }, [messages, isStreaming, onAssistantMessage])
 
   // 检测滚动容器是否接近底部（阈值 50px）
   const checkAtBottom = () => {
@@ -320,16 +281,16 @@ export default function ChatWindow({ agentId, className = '', onAIMessageSent }:
   const showThinking = isStreaming && toolActivity.length === 0 && !hasAssistantBubble
 
   return (
-    <div className={`flex flex-col bg-white ${className}`}>
+    <div className={`flex flex-col bg-white min-h-0 ${className}`}>
       {/* Messages */}
-      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-y-auto p-4 space-y-4">
+      <div ref={scrollRef} onScroll={handleScroll} className="flex-1 min-h-0 overflow-y-auto p-4 space-y-4">
         {messages.length === 0 && !isStreaming && (
           <div className="text-center text-gray-400 py-10">
             <div className="w-12 h-12 rounded-full bg-blue-50 text-blue-500 flex items-center justify-center mx-auto mb-3">
               <Sparkles size={20} />
             </div>
             <p className="text-sm">在下方输入框中发送消息</p>
-            <p className="text-xs mt-1">AI 助手将帮助你完成行程规划任务</p>
+            <p className="text-xs mt-1">AI 助手将帮助你完成旅游攻略任务</p>
           </div>
         )}
         {messages.map((msg, i) => (
@@ -346,7 +307,9 @@ export default function ChatWindow({ agentId, className = '', onAIMessageSent }:
             }`}>
               {msg.role === 'assistant' ? (
                 <div className="markdown-content">
-                  <ReactMarkdown components={{ a: MarkdownLink }}>{msg.content || ''}</ReactMarkdown>
+                  <ReactMarkdown components={{ a: MarkdownLink }} remarkPlugins={[remarkGfm]}>
+                    {normalizeMarkdown(msg.content || '')}
+                  </ReactMarkdown>
                 </div>
               ) : (
                 msg.content

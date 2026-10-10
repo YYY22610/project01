@@ -15,7 +15,7 @@ from sqlalchemy import select
 from app.database import async_session_factory
 from app.models.reminder import Reminder
 from app.models.user import User
-from app.services.email_service import send_email
+from app.services.email_service import send_email_async
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +106,8 @@ async def send_due_reminders() -> int:
                 f"—— 人机协作决策实验平台"
             )
             try:
-                res = send_email(email_addr, subject, body)
+                # 异步发送（内部放入线程池），避免同步 SMTP 阻塞事件循环
+                res = await send_email_async(email_addr, subject, body)
                 status = res.get("status")
                 if status in ("sent", "mock_sent"):
                     reminder.sent_at = datetime.now(timezone.utc)

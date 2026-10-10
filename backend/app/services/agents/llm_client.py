@@ -99,6 +99,15 @@ class RealLLMClient:
         }
         if tools:
             payload["tools"] = [{"type": "function", "function": t} for t in tools]
+        # Qwen3 系列默认开启长链「思考」，单次调用可达 100s+，整场规划 8 分钟，
+        # 实时交互 UI 无法接受。规划类任务无需深度推理，对 qwen3 关闭思考以大幅降时延。
+        # 仅对 qwen3 生效，其他模型不受影响；如需恢复思考可在 .env 改模型或此处调整。
+        if settings.LLM_MODEL.startswith("qwen3"):
+            # DashScope Qwen3 兼容接口：关闭长链思考以降低时延。
+            # 官方对原生 HTTP(body 顶层)与 OpenAI SDK(extra_body)两种传法表述不一，
+            # 这里两种都带上，确保至少一种被识别。
+            payload["enable_thinking"] = False
+            payload["chat_template_kwargs"] = {"enable_thinking": False}
 
         last_err: Exception | None = None
         # 最多重试 3 次（首次 + 2 次重试），退避 1s / 2s，消化偶发网络超时。
@@ -139,7 +148,19 @@ class RealLLMClient:
 
 
 def get_llm_client():
-    """Factory: return Mock or Real LLM client based on config."""
+    """Factory: return Mock or Real LLM client based on config.
+
+    决策顺序：
+      1. 配置了 LLM_API_KEY → 真实模型；
+      2. 未配置 Key 且 ALLOW_MOCK_LLM=true → Mock（开发/自测）；
+      3. 未配置 Key 且 ALLOW_MOCK_LLM=false → 拒绝（实验模式禁止 Mock，
+         启动期已拦截，此处再兜底一次，避免运行时意外回退到 Mock）。
+    """
     if settings.use_mock_llm:
+        if not settings.ALLOW_MOCK_LLM:
+            raise RuntimeError(
+                "ALLOW_MOCK_LLM=false（实验模式禁止 Mock LLM），但 LLM_API_KEY 为空；"
+                "请配置真实 LLM_API_KEY，勿用 Mock 收实验数据。"
+            )
         return MockLLMClient()
     return RealLLMClient()

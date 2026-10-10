@@ -113,5 +113,10 @@ export default function App() {
     }
   }, [token])
 
-  return <AppRoutes />
+  return (
+    // 全屏 flex 列容器：为各页面提供确定的视口高度，让页面内的 h-full / flex-1 / overflow-y-auto 链可靠生效
+    <div className="min-h-screen flex flex-col">
+      <AppRoutes />
+    </div>
+  )
 }

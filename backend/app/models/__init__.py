@@ -8,6 +8,7 @@ from app.models.admin_score import AdminScore
 from app.models.reminder import Reminder
 from app.models.system_config import SystemConfig
 from app.models.admin_user import AdminUser
+from app.models.moa_group_session import MoaGroupSession
 
 # Collect all model classes for easy import
 all_models = [
@@ -21,6 +22,7 @@ all_models = [
     Reminder,
     SystemConfig,
     AdminUser,
+    MoaGroupSession,
 ]
 
 __all__ = [m.__name__ for m in all_models] + ["all_models"]

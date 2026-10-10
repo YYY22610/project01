@@ -22,7 +22,7 @@ async def get_questionnaire_items(user: User = Depends(get_current_user), db: As
     """Get active questionnaire items applicable to the current user's group.
 
     Single-blind: items are filtered by the participant's assigned group so that
-    H (pure-human) sees tool/method-worded questions while SOA/MOA see AI-assistant
+    H (pure-human) sees tool/method-worded questions while MOA see AI-assistant
     wording. Items with NULL / "ALL" applicable_groups are shown to everyone.
     """
     result = await db.execute(

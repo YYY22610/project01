@@ -52,6 +52,8 @@ interface ChatState {
   resetAll: () => void
   /** 兜底：若本地已有历史聊天记录（升级前数据无 hasUsedAI 标记），挂载时回填标志 */
   ensureAIUsedFlag: () => void
+  /** 显式标记已使用 AI 助理（MOA 智囊团讨论开始时调用，用于「搜索景点」任务完成判定） */
+  markAIUsed: () => void
   /** 一次新的登录：切换至全新空会话（聊天记录按会话隔离） */
   startNewSession: () => void
   /** 流式输出时原地更新最后一条 assistant 消息，避免每条 token 都追加成新气泡 */
@@ -187,6 +189,9 @@ export const useChatStore = create<ChatState>()(
           const has = Object.values(state.messages).some((arr) => arr && arr.length > 0)
           return has ? { hasUsedAI: true } : {}
         }),
+
+      markAIUsed: () =>
+        set((state) => (state.hasUsedAI ? {} : { hasUsedAI: true })),
 
       updateAssistantContent: (agentId, content) =>
         set((state) => {

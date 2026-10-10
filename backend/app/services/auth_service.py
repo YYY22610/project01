@@ -13,11 +13,14 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plain: str, hashed: str | None) -> bool:
     try:
+        # 无密码用户（password_hash=None）直接判 False，避免 None.encode() 抛 AttributeError
+        if not plain or not hashed:
+            return False
         return bcrypt.checkpw(plain.encode("utf-8"), hashed.encode("utf-8"))
-    except (ValueError, TypeError):
-        # 哈希格式非法（如空串、截断）时安全返回 False，而非抛 500
+    except (ValueError, TypeError, AttributeError):
+        # 哈希格式非法（如空串、截断）或哈希为 None 时安全返回 False，而非抛 500
         return False
 
 

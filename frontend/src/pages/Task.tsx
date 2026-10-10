@@ -4,14 +4,19 @@ import { useUserStore } from '../stores/userStore'
 import { useBehaviorLogger } from '../hooks/useBehaviorLogger'
 import { useTimer } from '../hooks/useTimer'
 import { useAgentChat } from '../hooks/useAgentChat'
+import { useGroupChat } from '../hooks/useGroupChat'
 import { useChatStore } from '../stores/chatStore'
 import { searchApi, documentApi, reminderApi, emailApi } from '../services'
+import { api } from '../services/api'
+import { markdownToHtml } from '../lib/markdownToHtml'
 import type { SearchResult } from '../types'
 import {
   Search, Mail, Bell, FileText, Target, Sparkles, CheckCircle2, Clock,
-  Luggage, CalendarDays, Trash2, ExternalLink
+  Luggage, CalendarDays, Trash2, ExternalLink, Users
 } from 'lucide-react'
 import ChatWindow from '../components/ChatWindow'
+import MemberPanel from '../components/moa/MemberPanel'
+import MoaDiscussion from '../components/moa/MoaDiscussion'
 
 type SubTabKey = 'overview' | 'doc' | 'reminder' | 'email'
 type LeftTabKey = 'ai' | 'search'
@@ -25,9 +30,11 @@ export default function Task() {
 
   const dest = taskConfig?.destination || '杭州'
   const days = taskConfig?.task_days || 3
-  const budget = taskConfig?.task_budget || 1000
+  const budget = taskConfig?.task_budget || 2000
   const email = taskConfig?.target_email || 'experiment@example.com'
-  const planTitle = `${dest}${days}日游行程规划`
+  // 实验任务约束（MOA 组）：单人出行、当地预算、不含往返大交通
+  const travelers = taskConfig?.travelers || '1 人'
+  const planTitle = `${dest}${days}日游旅游攻略`
 
   const [activeSubTab, setActiveSubTab] = useState<SubTabKey>('overview')
   const [leftTab, setLeftTab] = useState<LeftTabKey>('ai')
@@ -58,6 +65,33 @@ export default function Task() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  // MOA 组：智囊团群辩相关状态
+  const moa = useGroupChat({ dest, days, budget, travelers })
+  // 三栏展开/收起状态持久化：刷新后恢复上次状态
+  const [moaExpanded, setMoaExpandedRaw] = useState<boolean>(
+    () => localStorage.getItem('moa_expanded') === 'true'
+  )
+  const setMoaExpanded = (v: boolean | ((prev: boolean) => boolean)) => {
+    setMoaExpandedRaw((prev) => {
+      const next = typeof v === 'function' ? v(prev) : v
+      localStorage.setItem('moa_expanded', String(next))
+      return next
+    })
+  }
+  const [moaLeftTab, setMoaLeftTabRaw] = useState<'council' | 'search'>(
+    () => (localStorage.getItem('moa_left_tab') as 'council' | 'search') || 'council'
+  )
+  const setMoaLeftTab = (v: 'council' | 'search' | ((prev: 'council' | 'search') => 'council' | 'search')) => {
+    setMoaLeftTabRaw((prev) => {
+      const next = typeof v === 'function' ? v(prev) : v
+      localStorage.setItem('moa_left_tab', next)
+      return next
+    })
+  }
+  const [planExporting, setPlanExporting] = useState(false)
+
+  // SOA 组：左侧 AI 助手栏固定宽度 560px，不再展示方案预览面板
+
   // 从 JWT 同步初始化分组信息，避免首屏 showAI 为 false（尚未判定）时
   // 把默认 leftTab 通过下方兜底 effect 强制改回「搜索引擎」
   const getGroupFromToken = (): string | null => {
@@ -72,11 +106,10 @@ export default function Task() {
   }
   const [showAI, setShowAI] = useState(() => {
     const g = getGroupFromToken()
-    return g === 'SOA' || g === 'MOA'
+    return g === 'MOA' || g === 'SOA'
   })
   const [isMOA, setIsMOA] = useState(() => getGroupFromToken() === 'MOA')
-  const [moaAgent, setMoaAgent] = useState<'moa_a' | 'moa_b'>('moa_a')
-  useAgentChat('soa')
+  const [isSOA, setIsSOA] = useState(() => getGroupFromToken() === 'SOA')
 
   const draftKey = user?.id ? `task_draft_${user.id}` : null
 
@@ -149,8 +182,9 @@ export default function Task() {
       try {
         const payload = JSON.parse(atob(token.split('.')[1]))
         const group = payload.group
-        setShowAI(group === 'SOA' || group === 'MOA')
+        setShowAI(group === 'MOA' || group === 'SOA')
         setIsMOA(group === 'MOA')
+        setIsSOA(group === 'SOA')
       } catch {}
     }
   }, [user])
@@ -177,7 +211,7 @@ export default function Task() {
   const handleGenerateDoc = async () => {
     const html = editorRef.current?.innerHTML ?? ''
     if (!html.trim() || html === '<br>' || html === '<div><br></div>') {
-      alert('请先输入行程规划内容再生成文档')
+      alert('请先输入旅游攻略内容再生成文档')
       return
     }
     logPlanEdit({ manualEditCount: editCountRef.current, contentSnippet: stripHtml(html).substring(0, 100) })
@@ -233,6 +267,33 @@ export default function Task() {
     }
   }
 
+  // MOA：把主持人整合出的方案导出为 Word
+  const handleExportPlan = async () => {
+    if (!moa.plan) return
+    setPlanExporting(true)
+    try {
+      const html = markdownToHtml(moa.plan.markdown)
+      const res = await documentApi.generate(planTitle, html, 'html')
+      // 生成成功后带鉴权拉取 .docx 并触发浏览器下载（真实"导出到本地"）
+      const fileResp = await api.get(`/document/download/${encodeURIComponent(res.data.file_name)}`, {
+        responseType: 'blob',
+      })
+      const url = URL.createObjectURL(new Blob([fileResp.data]))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = res.data.file_name
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+      alert(`方案文档已生成并下载: ${res.data.file_name}`)
+    } catch (e) {
+      alert('方案文档生成失败')
+    } finally {
+      setPlanExporting(false)
+    }
+  }
+
   const handleSubmit = async () => {
     setSubmitting(true)
     try {
@@ -274,14 +335,15 @@ export default function Task() {
           <div className="flex-1">
             <h2 className="font-bold text-2xl text-gray-900 mb-1.5">规划 {dest}{days} 日游</h2>
             <p className="text-base text-gray-500">
-              预算 <span className="text-blue-600 font-semibold">{budget} 元</span> · 请完成左侧「搜索引擎」及下方 3 项子任务，完成后点击右上角「提交」。
+              预算 <span className="text-blue-600 font-semibold">{budget} 元</span>（不含往返大交通） · {isMOA ? '可使用智囊团或搜索引擎辅助，完成下方子任务后点击右上角「提交」' : '请使用搜索引擎及下方工具完成任务，完成后点击右上角「提交」'}
             </p>
           </div>
         </div>
         <div className="flex gap-8 mt-5 pt-4 border-t border-[#e2ecf5]">
           <div><div className="text-xs text-gray-400">目的地</div><div className="text-lg font-semibold text-gray-900 mt-0.5">{dest}</div></div>
           <div><div className="text-xs text-gray-400">行程天数</div><div className="text-lg font-semibold text-gray-900 mt-0.5">{days} 天</div></div>
-          <div><div className="text-xs text-gray-400">预算</div><div className="text-lg font-semibold text-gray-900 mt-0.5">¥ {budget}</div></div>
+          <div><div className="text-xs text-gray-400">预算</div><div className="text-lg font-semibold text-gray-900 mt-0.5">¥ {budget}<span className="text-xs font-normal text-gray-400 ml-1">不含大交通</span></div></div>
+          <div><div className="text-xs text-gray-400">出行人数</div><div className="text-lg font-semibold text-gray-900 mt-0.5">{travelers}</div></div>
           <div><div className="text-xs text-gray-400">子任务</div><div className="text-lg font-semibold text-gray-900 mt-0.5">4 项</div></div>
         </div>
       </div>
@@ -306,7 +368,7 @@ export default function Task() {
             onChange={(e) => setSearchQuery(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
             className="flex-1 px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm"
-            placeholder="输入关键词，如：杭州西湖"
+            placeholder="输入关键词，如：西湖、灵隐寺"
           />
           <button onClick={handleSearch} className="px-5 py-2.5 bg-blue-600 text-white rounded-xl hover:bg-blue-700 text-sm font-medium">
             搜索
@@ -385,7 +447,7 @@ export default function Task() {
       "<html xmlns:o='urn:schemas-microsoft-com:office:office' " +
       "xmlns:w='urn:schemas-microsoft-com:office:word' " +
       "xmlns='http://www.w3.org/TR/REC-html40'>\n<head>\n" +
-      "<meta charset='utf-8'>\n<title>行程规划</title>\n<style>" +
+      "<meta charset='utf-8'>\n<title>旅游攻略</title>\n<style>" +
       "body{font-family:'Microsoft YaHei',sans-serif;max-width:800px;margin:40px auto;padding:20px;line-height:1.8;}" +
       "table{border-collapse:collapse;width:100%;}td,th{border:1px solid #ccc;padding:8px;}" +
       "</style>\n</head>\n<body>\n" + html + "\n</body>\n</html>"
@@ -399,7 +461,7 @@ export default function Task() {
       String(now.getDate()).padStart(2, '0') + '_' +
       String(now.getHours()).padStart(2, '0') +
       String(now.getMinutes()).padStart(2, '0')
-    a.download = `行程规划_${ts}.doc`
+    a.download = `旅游攻略_${ts}.doc`
     document.body.appendChild(a)
     a.click()
     document.body.removeChild(a)
@@ -443,7 +505,7 @@ export default function Task() {
           className="doc-editor flex-1"
           contentEditable
           suppressContentEditableWarning
-          data-placeholder="请在此处整理您的行程规划内容…"
+          data-placeholder="请在此处整理您的旅游攻略内容…"
           onInput={handleEditorInput}
         />
       </div>
@@ -483,7 +545,7 @@ export default function Task() {
         value={reminderContent}
         onChange={(e) => setReminderContent(e.target.value)}
         className="w-full px-5 py-3 bg-gray-50 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 text-base"
-        placeholder="提醒内容（如：出发前往杭州）"
+        placeholder="提醒内容（如：上午前往灵隐寺）"
       />
       <button
         onClick={handleSetReminder}
@@ -562,6 +624,89 @@ export default function Task() {
 
   const completedCount = [searchResults.length > 0, docGenerated, reminderSet, emailSent].filter(Boolean).length
 
+
+  // 行程详情主区（原逻辑，MOA 折叠态与 H 复用此函数）
+  const renderDetailInner = () => (
+    <>
+      {/* 顶部标题栏 */}
+      <header className="h-[72px] px-6 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
+        <div className="flex flex-col gap-0.5">
+          <div className="flex items-center gap-2">
+            <span className="w-1.5 h-6 rounded bg-[#2577e3]" />
+            <h1 className="text-2xl font-bold text-gray-900">行程详情</h1>
+          </div>
+          {user?.email && (
+            <span className="text-xs text-gray-400 ml-3.5">
+              当前账号：<span className="font-mono text-gray-500">{user.email}</span>
+            </span>
+          )}
+        </div>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5 px-5 py-2.5 bg-gray-50 rounded-full text-gray-500">
+            <Clock size={17} className="text-gray-400" />
+            <span className="font-mono font-semibold text-gray-900 text-lg">{formatted}</span>
+          </div>
+          <span className="flex items-center gap-1 text-base text-gray-400">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" /> 自动保存
+          </span>
+          <button
+            onClick={handleSubmit}
+            disabled={!allDone || submitting}
+            className="px-7 py-2.5 bg-blue-600 text-white text-lg font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600 transition shadow-sm"
+          >
+            {submitting ? '提交中...' : '提交'}
+          </button>
+        </div>
+      </header>
+
+      {/* 当前子任务内容 */}
+      <div className="flex-1 overflow-y-auto">
+        <div className="h-full p-4 space-y-3 flex flex-col">
+          {/* 总进度（任务卡上方，常驻显示） */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 shrink-0">
+            <h3 className="tp-section-title text-lg font-bold text-gray-900 mb-4">任务进度</h3>
+            <div className="grid grid-cols-4 gap-3">
+              {taskProgress.map((t) => {
+                const active = activeSubTab === t.subTab
+                return (
+                  <button
+                    key={t.key}
+                    onClick={() => setActiveSubTab(t.subTab)}
+                    className="flex flex-col items-center gap-2 text-center px-1 group cursor-pointer"
+                  >
+                    <div className={`w-12 h-12 rounded-full flex items-center justify-center transition ${active ? 'bg-blue-600 text-white ring-2 ring-blue-300 ring-offset-2' : t.done ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
+                      {t.done ? <CheckCircle2 size={22} /> : <t.icon size={22} />}
+                    </div>
+                    <p className={`text-sm font-medium leading-tight transition ${active ? 'text-blue-600' : t.done ? 'text-gray-900' : 'text-gray-500'}`}>{t.label}</p>
+                  </button>
+                )
+              })}
+            </div>
+            <div className="mt-5 pt-4 border-t border-gray-100">
+              <div className="flex justify-between items-center mb-1.5">
+                <span className="text-sm text-gray-500">总进度</span>
+                <span className="text-sm font-bold text-gray-900">{completedCount}/4</span>
+              </div>
+              <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
+                <div className="h-full bg-blue-600 transition-all" style={{ width: `${(completedCount / 4) * 100}%` }} />
+              </div>
+            </div>
+          </div>
+
+          {/* 任务卡 */}
+          <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex-1 min-h-0 flex flex-col">
+            <div className="flex-1">
+              {activeSubTab === 'overview' && renderOverview()}
+              {activeSubTab === 'doc' && renderDoc()}
+              {activeSubTab === 'reminder' && renderReminder()}
+              {activeSubTab === 'email' && renderEmail()}
+            </div>
+          </div>
+        </div>
+      </div>
+    </>
+  )
+
   return (
     <div className="task-page h-screen bg-[#f4f8fd] flex overflow-hidden">
       <style>{`
@@ -615,166 +760,142 @@ export default function Task() {
         .tp-ghost { border: 1px solid var(--tp-border); background: #fff; color: var(--tp-text2); border-radius: 12px; transition: all .15s; }
         .tp-ghost:hover { border-color: var(--tp-blue); color: var(--tp-blue); }
       `}</style>
-      {/* 左侧边栏：AI助手 / 搜索引擎 */}
-      <aside className="w-[480px] lg:w-[560px] bg-white border-r border-gray-100 flex flex-col shrink-0">
-        <div className="h-14 border-b border-gray-100 flex items-center px-1 shrink-0">
-          {showAI && (
-            <button
-              onClick={() => setLeftTab('ai')}
-              className={`relative px-5 h-14 text-lg font-medium transition ${
-                leftTab === 'ai'
-                  ? 'text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                <Sparkles size={17} /> AI助手
-              </span>
-              {leftTab === 'ai' && (
-                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
+
+      {isMOA && showAI ? (
+        <>
+          {/* 左列：智囊团 / 搜索引擎（MOA 组专属） */}
+          <aside className="w-[300px] bg-white border-r border-gray-100 flex flex-col shrink-0">
+            <div className="h-14 border-b border-gray-100 flex items-center px-1 shrink-0">
+              <button
+                onClick={() => setMoaLeftTab('council')}
+                className={`relative px-4 h-14 text-base font-medium transition ${
+                  moaLeftTab === 'council' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Users size={17} /> 智囊团
+                </span>
+                {moaLeftTab === 'council' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />}
+              </button>
+              <button
+                onClick={() => setMoaLeftTab('search')}
+                className={`relative px-4 h-14 text-base font-medium transition ${
+                  moaLeftTab === 'search' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'
+                }`}
+              >
+                <span className="flex items-center gap-1.5">
+                  <Search size={17} /> 搜索引擎
+                </span>
+                {moaLeftTab === 'search' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />}
+              </button>
+            </div>
+            <div className="flex-1 overflow-hidden bg-white">
+              {moaLeftTab === 'council' ? (
+                <MemberPanel
+                  stage={moa.stage}
+                  stageLabel={moa.stageLabel}
+                  speakingRoleId={moa.speakingRoleId}
+                  expanded={moaExpanded}
+                  onToggle={() => setMoaExpanded((v) => !v)}
+                />
+              ) : (
+                <div className="h-full p-4 flex flex-col">{renderSearchEngine()}</div>
               )}
-            </button>
-          )}
-          <button
-            onClick={() => setLeftTab('search')}
-              className={`relative px-5 h-14 text-lg font-medium transition ${
-                leftTab === 'search'
-                  ? 'text-blue-600'
-                  : 'text-gray-500 hover:text-gray-700'
-              }`}
-            >
-              <span className="flex items-center gap-1.5">
-                <Search size={17} /> 搜索引擎
-            </span>
-            {leftTab === 'search' && (
-              <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
-            )}
-          </button>
-        </div>
+            </div>
+          </aside>
 
-        <div className="flex-1 overflow-hidden bg-white">
-          {leftTab === 'ai' && showAI ? (
-            isMOA ? (
-              <div className="h-full flex flex-col">
-                {/* 顶部双 AI 助理切换 */}
-                <div className="flex shrink-0 border-b border-gray-100 bg-white">
-                  {([
-                    { id: 'moa_a', title: '信息检索专员', color: 'blue' },
-                    { id: 'moa_b', title: '行程编排专员', color: 'green' },
-                  ] as const).map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => setMoaAgent(t.id)}
-                      className={`relative flex-1 h-12 text-sm font-medium transition ${
-                        moaAgent === t.id
-                          ? 'text-blue-600 bg-blue-50'
-                          : 'text-gray-500 hover:text-gray-700'
-                      }`}
-                    >
-                      <span className="flex items-center justify-center gap-1.5">
-                        <Sparkles size={14} /> {t.title}
-                      </span>
-                      {moaAgent === t.id && (
-                        <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
-                      )}
-                    </button>
-                  ))}
-                </div>
-                {/* 当前助理窗口：高度拉满剩余页面 */}
-                <div className="flex-1 min-h-0">
-                  <ChatWindow agentId={moaAgent} className="h-full" />
-                </div>
-              </div>
+          {/* 右区：折叠 = 行程详情；展开 = 规划讨论室 + 最终方案 */}
+          <main className="flex-1 flex flex-col overflow-hidden min-h-0 bg-[#f4f8fd]">
+            {moaExpanded ? (
+              <MoaDiscussion
+                messages={moa.messages}
+                plan={moa.plan}
+                tempPlan={moa.tempPlan}
+                planConfirmed={moa.planConfirmed}
+                loading={moa.loading}
+                error={moa.error}
+                ctx={{ dest, days, budget, travelers }}
+                onSend={moa.sendMessage}
+                onExportWord={handleExportPlan}
+                exporting={planExporting}
+                awaitingUser={moa.awaitingUser}
+                onResume={moa.resume}
+              />
             ) : (
-              <ChatWindow agentId="soa" className="h-full" />
-            )
-          ) : (
-            <div className="h-full p-4 flex flex-col">
-              {renderSearchEngine()}
-            </div>
-          )}
-        </div>
-      </aside>
-
-      {/* 右侧行程详情 */}
-      <main className="flex-1 flex flex-col overflow-hidden bg-[#f4f8fd]">
-        {/* 顶部标题栏 */}
-        <header className="h-[72px] px-6 bg-white border-b border-gray-100 flex items-center justify-between shrink-0">
-          <div className="flex flex-col gap-0.5">
-            <div className="flex items-center gap-2">
-              <span className="w-1.5 h-6 rounded bg-[#2577e3]" />
-              <h1 className="text-2xl font-bold text-gray-900">行程详情</h1>
-            </div>
-            {user?.email && (
-              <span className="text-xs text-gray-400 ml-3.5">
-                当前账号：<span className="font-mono text-gray-500">{user.email}</span>
-              </span>
+              renderDetailInner()
             )}
-          </div>
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1.5 px-5 py-2.5 bg-gray-50 rounded-full text-gray-500">
-              <Clock size={17} className="text-gray-400" />
-              <span className="font-mono font-semibold text-gray-900 text-lg">{formatted}</span>
+          </main>
+        </>
+      ) : isSOA && showAI ? (
+        <>
+          {/* 左列：AI助手 / 搜索引擎（SOA 组：单 AI 助理，固定 560px） */}
+          <aside className="w-[560px] bg-white border-r border-gray-100 flex flex-col shrink-0">
+            <div className="h-14 border-b border-gray-100 flex items-center px-1 shrink-0">
+              <div className="flex items-center">
+                <button
+                  onClick={() => setLeftTab('ai')}
+                  className={`relative px-4 h-14 text-base font-medium transition ${
+                    leftTab === 'ai' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Sparkles size={17} /> AI助手
+                  </span>
+                  {leftTab === 'ai' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />}
+                </button>
+                <button
+                  onClick={() => setLeftTab('search')}
+                  className={`relative px-4 h-14 text-base font-medium transition ${
+                    leftTab === 'search' ? 'text-blue-600' : 'text-gray-500 hover:text-gray-700'
+                  }`}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <Search size={17} /> 搜索引擎
+                  </span>
+                  {leftTab === 'search' && <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />}
+                </button>
+              </div>
             </div>
-            <span className="flex items-center gap-1 text-base text-gray-400">
-              <span className="w-2 h-2 rounded-full bg-emerald-400" /> 自动保存
-            </span>
-            <button
-              onClick={handleSubmit}
-              disabled={!allDone || submitting}
-              className="px-7 py-2.5 bg-blue-600 text-white text-lg font-medium rounded-lg hover:bg-blue-700 disabled:opacity-40 disabled:hover:bg-blue-600 transition shadow-sm"
-            >
-              {submitting ? '提交中...' : '提交'}
-            </button>
-          </div>
-        </header>
+            <div className="flex-1 overflow-hidden bg-white flex flex-col min-h-0">
+              {leftTab === 'ai' ? (
+                <ChatWindow agentId="soa" className="flex-1 min-h-0" />
+              ) : (
+                <div className="h-full p-4 flex flex-col">{renderSearchEngine()}</div>
+              )}
+            </div>
+          </aside>
 
-        {/* 当前子任务内容 */}
-        <div className="flex-1 overflow-y-auto">
-          <div className="h-full p-4 space-y-3 flex flex-col">
-            {/* 总进度（任务卡上方，常驻显示） */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 shrink-0">
-              <h3 className="tp-section-title text-lg font-bold text-gray-900 mb-4">任务进度</h3>
-              <div className="grid grid-cols-4 gap-3">
-                {taskProgress.map((t) => {
-                  const active = activeSubTab === t.subTab
-                  return (
-                    <button
-                      key={t.key}
-                      onClick={() => setActiveSubTab(t.subTab)}
-                      className="flex flex-col items-center gap-2 text-center px-1 group cursor-pointer"
-                    >
-                      <div className={`w-12 h-12 rounded-full flex items-center justify-center transition ${active ? 'bg-blue-600 text-white ring-2 ring-blue-300 ring-offset-2' : t.done ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-400 group-hover:bg-gray-200'}`}>
-                        {t.done ? <CheckCircle2 size={22} /> : <t.icon size={22} />}
-                      </div>
-                      <p className={`text-sm font-medium leading-tight transition ${active ? 'text-blue-600' : t.done ? 'text-gray-900' : 'text-gray-500'}`}>{t.label}</p>
-                    </button>
-                  )
-                })}
-              </div>
-              <div className="mt-5 pt-4 border-t border-gray-100">
-                <div className="flex justify-between items-center mb-1.5">
-                  <span className="text-sm text-gray-500">总进度</span>
-                  <span className="text-sm font-bold text-gray-900">{completedCount}/4</span>
-                </div>
-                <div className="h-2.5 bg-gray-100 rounded-full overflow-hidden">
-                  <div className="h-full bg-blue-600 transition-all" style={{ width: `${(completedCount / 4) * 100}%` }} />
-                </div>
-              </div>
+          {/* 右侧行程详情 */}
+          <main className="flex-1 flex flex-col overflow-hidden bg-[#f4f8fd]">
+            {renderDetailInner()}
+          </main>
+        </>
+      ) : (
+        <>
+          {/* 左侧边栏：搜索引擎（H 组，无 AI 助手） */}
+          <aside className="w-[480px] lg:w-[560px] bg-white border-r border-gray-100 flex flex-col shrink-0">
+            <div className="h-14 border-b border-gray-100 flex items-center px-1 shrink-0">
+              <button
+                className="relative px-5 h-14 text-lg font-medium text-blue-600"
+              >
+                <span className="flex items-center gap-1.5">
+                  <Search size={17} /> 搜索引擎
+                </span>
+                <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-blue-600" />
+              </button>
             </div>
 
-            {/* 任务卡 */}
-            <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6 flex-1 min-h-0 flex flex-col">
-              <div className="flex-1">
-                {activeSubTab === 'overview' && renderOverview()}
-                {activeSubTab === 'doc' && renderDoc()}
-                {activeSubTab === 'reminder' && renderReminder()}
-                {activeSubTab === 'email' && renderEmail()}
-              </div>
+            <div className="flex-1 overflow-hidden bg-white">
+              <div className="h-full p-4 flex flex-col">{renderSearchEngine()}</div>
             </div>
-          </div>
-        </div>
-      </main>
+          </aside>
+
+          {/* 右侧行程详情 */}
+          <main className="flex-1 flex flex-col overflow-hidden bg-[#f4f8fd]">
+            {renderDetailInner()}
+          </main>
+        </>
+      )}
     </div>
   )
 }

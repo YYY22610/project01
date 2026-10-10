@@ -9,7 +9,11 @@ export const authApi = {
     api.post('/auth/login', { email, password }),
   loginByEmail: (email: string) =>
     api.post('/auth/login-by-email', { email }),
-  consent: () => api.post('/auth/consent'),
+  /** 签署知情同意 + 提交前置问卷（10 题），原子接口 */
+  consent: (agreed: boolean, survey: {
+    q1: string; q2: string; q3: string; q4: string[]; q5: string;
+    q6: string; q7: string; q8: string; q9: string; q10: string;
+  }) => api.post('/auth/consent', { agreed, survey }),
   demographics: (data: any) => api.post('/auth/demographics', data),
   me: () => api.get<User>('/auth/me'),
   adminLogin: (username: string, password: string) =>
@@ -161,6 +165,90 @@ export const agentApi = {
   /** 干预接口：参与者随时中断指定助理的当前操作 */
   cancel: async (agentId: string): Promise<void> => {
     await api.post('/agent/cancel', { agent_id: agentId })
+  },
+}
+
+// MOA 组多角色群辩讨论（SSE）
+export const groupApi = {
+  discuss: async (
+    payload: { message: string; dest?: string; days?: number; budget?: number; travelers?: string },
+    onEvent: (event: string, data: any) => void,
+    signal?: AbortSignal
+  ): Promise<void> => {
+    const token = localStorage.getItem('access_token')
+    const response = await fetch('/api/moa/group-discuss', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`,
+      },
+      body: JSON.stringify(payload),
+      signal,
+    })
+
+    if (!response.ok) {
+      let detail = `Group discuss failed: ${response.status}`
+      try {
+        const body = await response.json()
+        if (body?.detail) detail = `Group discuss failed: ${response.status} - ${body.detail}`
+      } catch {
+        // 非 JSON 响应时保持默认提示
+      }
+      throw new Error(detail)
+    }
+
+    const reader = response.body!.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    try {
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        buffer += decoder.decode(value, { stream: true })
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
+        let currentEvent = ''
+        for (const line of lines) {
+          if (line.startsWith('event: ')) {
+            currentEvent = line.slice(7).trim()
+          } else if (line.startsWith('data: ') && currentEvent) {
+            try {
+              const data = JSON.parse(line.slice(6))
+              onEvent(currentEvent, data)
+            } catch {
+              onEvent(currentEvent, line.slice(6))
+            }
+            currentEvent = ''
+          }
+        }
+      }
+    } catch (err: any) {
+      if (err?.name === 'AbortError') return
+      throw err
+    }
+  },
+
+  /** 群聊暂停等待用户输入时，回填用户回答/确认意见，恢复群聊 */
+  resume: async (message: string): Promise<void> => {
+    await api.post('/moa/group-resume', { message })
+  },
+  /** 中断当前用户所在的群聊会话（刷新后旧 SSE 会话可能仍驻留后端，重发前先清掉） */
+  cancel: async (): Promise<void> => {
+    await api.post('/moa/group-cancel')
+  },
+  /** 恢复当前用户的群聊上下文（数据库持久化，按用户隔离；刷新后保留现场） */
+  getState: async (): Promise<{ context: any; server_stage: any }> => {
+    const res = await api.get('/moa/group-state')
+    return res.data
+  },
+  /** 保存当前用户的群聊上下文快照（消息/方案/阶段） */
+  saveState: async (context: any): Promise<void> => {
+    await api.put('/moa/group-state', { context })
+  },
+  /** 清除当前用户的群聊上下文（重置/新开一场时） */
+  clearState: async (): Promise<void> => {
+    await api.delete('/moa/group-state')
   },
 }
 

@@ -1,4 +1,4 @@
-"""Group assignment service — block randomization for 1:1:1 allocation."""
+"""Group assignment service — block randomization for 1:1:1 allocation (H vs SOA vs MOA)."""
 import random
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -46,10 +46,9 @@ async def assign_group(db: AsyncSession, user: User) -> ExperimentGroup:
         min_count = min(h_count, soa_count, moa_count)
         if h_count == min_count:
             return ExperimentGroup.H
-        elif soa_count == min_count:
+        if soa_count == min_count:
             return ExperimentGroup.SOA
-        else:
-            return ExperimentGroup.MOA
+        return ExperimentGroup.MOA
 
     # Block randomization: find the group with the fewest members
     # among groups with capacity, then randomize among ties

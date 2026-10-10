@@ -1,43 +1,44 @@
 """Agent router: SSE streaming chat with AI agents."""
 import json
+import logging
 import time
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import async_session_factory
 from app.deps import get_current_user
 from app.models.user import User, ExperimentGroup
 from app.models.behavior_log import BehaviorLog, ActionType
 from app.models.system_config import SystemConfig
-from app.schemas.agent import ChatRequest, CancelRequest
+from app.schemas.agent import ChatRequest, CancelRequest, GroupDiscussRequest
 from app.services.agents.agent_cancel import cancel_manager
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.post("/chat")
 async def agent_chat(
     req: ChatRequest,
     user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
 ):
     """
     Chat with an AI agent via SSE streaming.
-    Only available for SOA and MOA group users.
+    Available for SOA (single assistant) and MOA (multi-agent) group users.
     """
     if user.group not in (ExperimentGroup.SOA, ExperimentGroup.MOA):
         raise HTTPException(status_code=403, detail="当前用户组不支持AI助理功能")
 
-    # Pause switch (experiment interruption) — OpenClaw monitoring
-    paused_cfg = (await db.execute(
-        select(SystemConfig).where(SystemConfig.key == "agent_service_paused")
-    )).scalar_one_or_none()
+    # Pause switch (experiment interruption) — OpenClaw monitoring（短会话）
+    async with async_session_factory() as db:
+        paused_cfg = (await db.execute(
+            select(SystemConfig).where(SystemConfig.key == "agent_service_paused")
+        )).scalar_one_or_none()
     if paused_cfg and paused_cfg.value == "true":
         raise HTTPException(status_code=403, detail="AI助理服务已暂停，请稍后重试或联系管理员")
 
-    # Validate agent_id based on group
+    # Validate agent_id based on group (SOA -> soa; MOA -> moa_a/moa_b)
     valid_agents = {"soa"} if user.group == ExperimentGroup.SOA else {"moa_a", "moa_b"}
     if req.agent_id not in valid_agents:
         raise HTTPException(status_code=400, detail=f"无效的助理ID，可选: {valid_agents}")
@@ -66,7 +67,7 @@ async def agent_chat(
             async def _cancel_check():
                 return await cancel_manager.is_cancelled(str(user.id), req.agent_id)
 
-            async for chunk in agent.chat(str(user.id), req.message, db, cancel_check=_cancel_check):
+            async for chunk in agent.chat(str(user.id), req.message, cancel_check=_cancel_check):
                 event_type = chunk.get("type", "content")
                 data = chunk.get("data", "")
                 # 捕获 AI 逐步响应：content 为文本，tool_call/tool_result 记录为 JSON
@@ -85,8 +86,9 @@ async def agent_chat(
                 yield f"event: done\ndata: {json.dumps({'status': 'completed'})}\n\n"
         except Exception as e:
             success = False
-            err_detail = str(e)
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+            err_detail = str(e)  # 完整错误仅记录到服务端日志与行为日志，不泄露给客户端
+            logger.exception("Agent stream error: user=%s agent=%s", user.id, req.agent_id)
+            yield f"event: error\ndata: {json.dumps({'error': 'AI 服务暂时不可用，请稍后重试'})}\n\n"
         finally:
             # Record the agent interaction for OpenClaw monitoring + research logs
             latency_ms = int((time.monotonic() - start) * 1000)
@@ -106,8 +108,10 @@ async def agent_chat(
                     "cancelled": was_cancelled,
                 },
             )
-            db.add(log)
-            await db.commit()
+            # 行为日志写库：流内不持长生命周期会话，此处临时开短会话用完即关
+            async with async_session_factory() as db:
+                db.add(log)
+                await db.commit()
 
     return StreamingResponse(
         event_stream(),
@@ -135,3 +139,46 @@ async def agent_cancel(
 
     await cancel_manager.request_cancel(str(user.id), req.agent_id)
     return {"status": "cancelled", "agent_id": req.agent_id}
+
+
+@router.post("/group-discuss")
+async def group_discuss(
+    req: GroupDiscussRequest,
+    user: User = Depends(get_current_user),
+):
+    """
+    MOA 组多角色群辩讨论（模式 B）：4 位职能角色 + 主持人同屏辩论，
+    由主持人整合成最终方案。结果以 SSE 事件流返回：
+      stage / role_start / content / role_end / done / error
+    仅 MOA 组可用。
+    """
+    if user.group != ExperimentGroup.MOA:
+        raise HTTPException(status_code=403, detail="当前用户组不支持智囊团讨论功能")
+
+    from app.services.group_discussion import run_group_discussion
+
+    async def event_stream():
+        try:
+            async for chunk in run_group_discussion(
+                requirement=req.message,
+                dest=req.dest,
+                days=req.days,
+                budget=req.budget,
+                travelers=req.travelers,
+            ):
+                ctype = chunk.get("type", "content")
+                data = chunk.get("data", "")
+                yield f"event: {ctype}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
+        except Exception as e:
+            logger.exception("Group discuss error: user=%s", user.id)
+            yield f"event: error\ndata: {json.dumps({'error': '智囊团讨论暂时不可用，请稍后重试'})}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )

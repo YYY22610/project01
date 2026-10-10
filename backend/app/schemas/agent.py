@@ -12,6 +12,15 @@ class CancelRequest(BaseModel):
     agent_id: str = "soa"  # 要中断的助理 ID
 
 
+class GroupDiscussRequest(BaseModel):
+    """MOA 组多角色群辩讨论请求。"""
+    message: str
+    dest: str = "杭州"
+    days: int = 3
+    budget: int = 2000
+    travelers: str = "1 人"
+
+
 class ChatMessageResponse(BaseModel):
     id: str
     agent_id: str
