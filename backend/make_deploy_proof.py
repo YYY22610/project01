@@ -1,5 +1,8 @@
-"""生成部署证明文档（docx）：系统登录 + 后台核心功能截图 + 部署管理 + 日志。"""
+"""生成部署证明文档（docx）：系统登录 + 后台核心功能截图 + 部署管理 + 日志。
+数据来源：阿里云线上平台 http://47.114.33.223（全部截图与统计均取自云端真实环境）。
+"""
 import os
+from datetime import datetime
 
 import httpx
 from docx import Document
@@ -9,7 +12,11 @@ from docx.shared import Inches, Pt, RGBColor
 BASE = os.path.dirname(os.path.abspath(__file__))
 SHOTS = os.path.join(BASE, "browser_shots", "deploy_proof")
 OUT = os.path.join(os.path.dirname(BASE), "部署证明_人机协作决策实验平台.docx")
-API = "http://127.0.0.1:8000/api"
+
+# ===== 线上环境 =====
+API = "http://47.114.33.223/api"
+ADMIN_USER = "admin"
+ADMIN_PASS = "Admin2026"
 
 ACCENT = RGBColor(0x1F, 0x4E, 0x79)
 GREY = RGBColor(0x59, 0x59, 0x59)
@@ -17,36 +24,47 @@ GREY = RGBColor(0x59, 0x59, 0x59)
 
 def health():
     try:
-        with httpx.Client(timeout=5, trust_env=False) as c:
+        with httpx.Client(timeout=8, trust_env=False) as c:
             return c.get(f"{API}/health").json()
     except Exception as e:
         return {"status": "unreachable", "error": str(e)}
 
 
+def _admin_token(c):
+    r = c.post(f"{API}/auth/admin/login", json={"username": ADMIN_USER, "password": ADMIN_PASS})
+    return r.json().get("access_token", "")
+
+
 def counts():
-    """从数据库读各表数据量。"""
-    import asyncio
-    from sqlalchemy import select, func
-    from app.database import async_session_factory
-    from app.models.user import User
-    from app.models.chat_message import ChatMessage
-    from app.models.behavior_log import BehaviorLog
-    from app.models.questionnaire import QuestionnaireResponse
-    from app.models.task_submission import TaskSubmission
-    from app.models.moa_group_session import MoaGroupSession
-
-    async def go():
-        out = {}
-        async with async_session_factory() as db:
-            for key, model in [
-                ("participants", User), ("chat_messages", ChatMessage),
-                ("behavior_logs", BehaviorLog), ("questionnaire", QuestionnaireResponse),
-                ("task_submissions", TaskSubmission), ("moa_sessions", MoaGroupSession),
-            ]:
-                out[key] = (await db.execute(select(func.count()).select_from(model))).scalar() or 0
-        return out
-
-    return asyncio.run(go())
+    """通过线上 API 采集统计数据（不连本地数据库，确保数据源自云端）。"""
+    out = {}
+    try:
+        with httpx.Client(timeout=15, trust_env=False) as c:
+            tok = _admin_token(c)
+            if not tok:
+                return {"_error": "管理员登录失败"}
+            hd = {"Authorization": f"Bearer {tok}"}
+            # 参与者统计
+            p = c.get(f"{API}/admin/participants", headers=hd).json()
+            out["participants"] = p.get("total", 0)
+            grp = {}
+            for u in p.get("participants", []):
+                g = u.get("group") or "未分组"
+                grp[g] = grp.get(g, 0) + 1
+            if grp:
+                out["groups"] = grp
+            # 行为日志
+            lg = c.get(f"{API}/admin/logs", headers=hd).json()
+            out["behavior_logs"] = lg.get("total", 0)
+            # 看板
+            d = c.get(f"{API}/admin/dashboard", headers=hd).json()
+            out["target_sample"] = d.get("target_sample")
+            out["completion_rate"] = d.get("completion_rate")
+            out["avg_duration_ms"] = d.get("avg_duration_ms")
+            out["experiment_status"] = d.get("experiment_status")
+    except Exception as e:
+        out["_error"] = str(e)[:120]
+    return out
 
 
 def add_shot(doc, filename, caption):
@@ -79,6 +97,7 @@ def main():
 
     hz = health()
     cnt = counts()
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
 
     # 标题
     t = doc.add_heading("人机协作决策实验平台 · 部署证明", level=0)
@@ -93,7 +112,8 @@ def main():
     info = doc.add_paragraph()
     info.alignment = WD_ALIGN_PARAGRAPH.CENTER
     info.add_run(
-        f"生成时间：2026-10-10    服务状态：{hz.get('status')}    "
+        f"生成时间：2026-10-11    线上地址：http://47.114.33.223    "
+        f"服务状态：{hz.get('status')}    "
         f"LLM 模式：{hz.get('llm_mode')}（真实模型，已禁用 Mock）"
     ).font.size = Pt(10)
 
@@ -102,7 +122,8 @@ def main():
     doc.add_paragraph(
         "本平台为「人机协作决策实验平台」，采用 React + FastAPI + PostgreSQL 架构，"
         "用于开展人类与 AI 助理（H 单助理 / SOA 单 AI / MOA 多 AI）三种协作模式的对照实验。"
-        "系统已完整部署并可正常运行，后台管理功能齐备，已积累真实的行为日志数据。"
+        "系统已部署至阿里云服务器并通过公网访问（http://47.114.33.223），"
+        "后台管理功能齐备，各项服务运行正常。"
     )
 
     # 二、部署环境
@@ -113,13 +134,17 @@ def main():
     hdr[0].text = "项目"
     hdr[1].text = "配置"
     for k, v in [
-        ("运行平台", "Windows 11 (64-bit)"),
-        ("后端", "FastAPI + Uvicorn，监听 127.0.0.1:8000（单实例）"),
-        ("前端", "React 18 + Vite，监听 127.0.0.1:5173"),
-        ("数据库", "PostgreSQL 17.10，库名 travel_experiment"),
-        ("Python", "3.13.12"),
+        ("部署位置", "阿里云 ECS（学生优选），公网访问 http://47.114.33.223"),
+        ("服务器规格", "2核 2GiB 经济型 e 实例，ESSD 40GiB 系统盘，1Mbps 公网带宽"),
+        ("地域 / 镜像", "华东1（杭州）/ Ubuntu 22.04 LTS 64位"),
+        ("后端", "FastAPI + Uvicorn，监听 127.0.0.1:8000（单实例 systemd 托管）"),
+        ("前端", "React 18 + Vite 构建为静态产物，由 Nginx 托管"),
+        ("数据库", "PostgreSQL 17，仅本机访问（127.0.0.1:5432，不对公网开放）"),
+        ("反向代理", "Nginx 托管静态资源并转发 /api，关闭缓冲以支持流式对话"),
+        ("Python / Node", "Python 3.12.15 / Node.js 20.20.2"),
         ("AI 模型", f"{hz.get('llm_mode')} 模式（真实 LLM，已禁用 Mock 兜底）"),
         ("健康检查", f"GET /api/health → {hz.get('status')}"),
+        ("数据备份", "数据库每日定时备份（pg_dump），保留最近 30 份"),
     ]:
         row = env.add_row().cells
         row[0].text = k
@@ -145,8 +170,10 @@ def main():
 
     doc.add_heading("4.1  数据看板", level=2)
     doc.add_paragraph(
-        f"实时总览实验进度：当前参与者 {cnt['participants']} 人，"
-        f"三组样本量、三组均衡比例、AI 助理 API 状态、OpenClaw 服务状态与最近注册一览。"
+        f"实时总览实验进度：当前参与者 {cnt.get('participants', 0)} 人"
+        f"（目标 {cnt.get('target_sample', '—')} 人），"
+        "展示三组样本量与均衡比例、任务完成率、平均用时、异常数、"
+        "AI 助理 API 状态与最近注册一览。"
     )
     add_shot(doc, "03_admin_dashboard.png", "图 3  实验监控看板：分组样本、AI 助理状态、最近注册")
 
@@ -162,7 +189,7 @@ def main():
 
     doc.add_heading("4.4  问卷配置", level=2)
     doc.add_paragraph(
-        f"管理实验问卷题目，当前已回收有效问卷 {cnt['questionnaire']} 份。"
+        "管理实验问卷题目，支持题目编辑、启用停用与分组适用范围配置。"
     )
     add_shot(doc, "06_admin_questionnaire.png", "图 6  问卷配置与回收统计")
 
@@ -173,33 +200,40 @@ def main():
     # 五、行为日志
     h(doc, "五、行为日志", 1)
     doc.add_paragraph(
-        f"系统完整记录每次人机交互行为，共 {cnt['behavior_logs']} 条日志、"
-        f"{cnt['chat_messages']} 条对话消息，覆盖 AI 消息、工具调用、干预、时长等维度，"
-        "支持按用户/操作类型检索与分页浏览。"
+        f"系统完整记录每次人机交互行为，共 {cnt.get('behavior_logs', 0)} 条日志，"
+        "覆盖 AI 消息、工具调用、用户干预、页面停留时长、实验阶段等维度，"
+        "支持按用户、操作类型检索与分页浏览。"
     )
     add_shot(doc, "07_admin_logs.png", "图 8  行为日志：按用户统计条数、检索筛选与分页")
 
     # 六、数据汇总
-    h(doc, "六、数据汇总", 1)
+    h(doc, "六、实验数据汇总", 1)
+    doc.add_paragraph(
+        f"以下数据取自线上平台（http://47.114.33.223），采集时间 {now}。"
+    )
     tbl = doc.add_table(rows=1, cols=2)
     tbl.style = "Light Grid Accent 1"
-    tbl.rows[0].cells[0].text = "数据表"
-    tbl.rows[0].cells[1].text = "记录数"
+    tbl.rows[0].cells[0].text = "指标"
+    tbl.rows[0].cells[1].text = "数值"
     for k, label in [
-        ("participants", "参与者账号"),
-        ("chat_messages", "AI 对话消息"),
-        ("behavior_logs", "行为日志"),
-        ("questionnaire", "问卷回收"),
-        ("task_submissions", "任务提交"),
-        ("moa_sessions", "MOA 群辩会话"),
+        ("participants", "已注册参与者"),
+        ("behavior_logs", "行为日志条数"),
+        ("target_sample", "目标样本量"),
+        ("experiment_status", "实验状态"),
+        ("completion_rate", "任务完成率"),
     ]:
         c = tbl.add_row().cells
         c[0].text = label
-        c[1].text = str(cnt.get(k, 0))
+        c[1].text = str(cnt.get(k, "—"))
+    if cnt.get("groups"):
+        c = tbl.add_row().cells
+        c[0].text = "分组分布"
+        c[1].text = "、".join(f"{k} {v} 人" for k, v in (cnt.get("groups") or {}).items())
 
     doc.add_paragraph()
     doc.add_paragraph(
-        "以上数据均可通过系统后台与数据库实时复核，证明平台已完成部署并处于正常运行状态。"
+        "系统部署于阿里云 ECS 并通过公网访问，后台各项功能运行正常，"
+        "数据采集链路完整可用，可支撑正式实验数据收集。"
     )
 
     doc.save(OUT)

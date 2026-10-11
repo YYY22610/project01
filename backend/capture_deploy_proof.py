@@ -6,7 +6,7 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
-FRONTEND = "http://127.0.0.1:5173"
+FRONTEND = "http://47.114.33.223"
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "browser_shots", "deploy_proof")
 CHROME = r"C:\Users\27475\.agent-browser\browsers\chrome-152.0.7977.64\chrome.exe"
 
@@ -38,7 +38,7 @@ def main():
         # 2) 管理员登录
         try:
             page.fill('input[type="text"], input[name="username"], input[placeholder*="用户名"], input[placeholder*="账号"]', "admin")
-            page.fill('input[type="password"]', "admin123")
+            page.fill('input[type="password"]', "Admin2026")
             page.wait_for_timeout(300)
             page.screenshot(path=os.path.join(OUT, "02_admin_login_filled.png"), full_page=True)
             page.click('button[type="submit"]')
