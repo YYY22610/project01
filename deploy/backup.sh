@@ -18,9 +18,21 @@ BACKUP_DIR="/opt/backup/travel_experiment"
 DB_USER="travel"
 DB_HOST="127.0.0.1"
 DB_NAME="travel_experiment"
+# 数据库密码来源：优先读项目 .env 的 DATABASE_URL（避免在本脚本硬编码密码）
+ENV_FILE="/opt/app/backend/.env"
 KEEP_DAYS=30            # 保留最近多少份
 MIN_FREE_MB=500         # 磁盘剩余低于此值(MB)则先删最旧的备份
 # ====================
+
+# 从 .env 的 DATABASE_URL 中提取密码（形如 postgresql+asyncpg://user:pass@host:port/db）
+# 注意：密码含特殊字符时须为 URL 编码形式（@ → %40等），此处原样取出即可。
+if [ -f "$ENV_FILE" ]; then
+    DB_URL=$(grep -E '^DATABASE_URL=' "$ENV_FILE" | head -1 | cut -d= -f2-)
+    DB_PASS=$(printf '%s' "$DB_URL" | sed -E 's|^[^:]+://[^:]+:([^@]*)@.*|\1|')
+fi
+# 回退：允许用环境变量或 .pgpass 提供密码
+DB_PASS="${DB_PASS:-${PGPASSWORD:-}}"
+export PGPASSWORD="$DB_PASS"
 
 mkdir -p "$BACKUP_DIR"
 DATE=$(date +%Y%m%d_%H%M%S)
