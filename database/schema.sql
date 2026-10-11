@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
     session_id VARCHAR(100),
     task_start_time TIMESTAMPTZ,
     task_end_time TIMESTAMPTZ,
+    -- 签知情同意时提交的前置问卷原始 10 题答案（JSONB）
+    pre_survey JSONB,
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -139,6 +141,11 @@ CREATE TABLE IF NOT EXISTS reminders (
     reminder_datetime TIMESTAMPTZ NOT NULL,
     content TEXT,
     is_set BOOLEAN DEFAULT TRUE,
+    -- 标记提醒邮件是否已发送；NULL 表示尚未发送，发送后置为发送时间
+    sent_at TIMESTAMPTZ,
+    -- 发送失败计数与最近一次错误，用于重试上限与永久失败判定
+    failed_attempts INTEGER DEFAULT 0 NOT NULL,
+    last_error TEXT,
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 

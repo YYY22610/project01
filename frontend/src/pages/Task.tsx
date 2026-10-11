@@ -121,6 +121,50 @@ export default function Task() {
   const stripHtml = (s: string) =>
     s.replace(/<[^>]+>/g, ' ').replace(/&nbsp;/g, ' ').replace(/\s+/g, ' ').trim()
 
+  /**
+   * 解码 JSON 的 \uXXXX 转义序列为真实字符。
+   *
+   * 背景：AI 助手回复以 SSE 传输，若参与者直接从「原始响应 / 接口返回」处复制，
+   * 剪贴板里会带上 Python json.dumps() 转义后的中文（ensure_ascii=True 默认行为），
+   * 例如「日」变成「日」。这些转义直接写进 Word 会显示成乱码。
+   * 粘贴时统一还原，肉眼与文档中都是正常中文。
+   */
+  const decodeUnicodeEscapes = (s: string): string =>
+    // 匹配 \uXXXX（含代理对这类组合），逐个替换为对应码位的字符
+    s.replace(/\\u([0-9a-fA-F]{4})/g, (_, hex: string) => String.fromCharCode(parseInt(hex, 16)))
+
+  // 转义 HTML 特殊字符，避免纯文本粘贴时把 & < > 当成标签解析
+  const escapeHtml = (s: string) =>
+    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+
+  /**
+   * 拦截编辑器粘贴：清洗 HTML 中的 \uXXXX 转义，避免生成的 Word 出现乱码。
+   * 仅当内容确实含有转义序列时才改写，否则保持浏览器默认粘贴行为（保留格式）。
+   */
+  const handleEditorPaste = (e: React.ClipboardEvent<HTMLDivElement>) => {
+    const htmlData = e.clipboardData.getData('text/html')
+    const plainData = e.clipboardData.getData('text/plain')
+    // 两端都没有转义序列 → 交给浏览器默认处理（无粘板事件拦截成本）
+    if (!/\\u[0-9a-fA-F]{4}/.test(htmlData) && !/\\u[0-9a-fA-F]{4}/.test(plainData)) return
+
+    e.preventDefault()
+    const decodedHtml = htmlData ? decodeUnicodeEscapes(htmlData) : ''
+    const decodedPlain = plainData ? decodeUnicodeEscapes(plainData) : ''
+
+    // 优先用 HTML（保留加粗/列表等富文本），没有则按纯文本插入并按行拆段
+    if (decodedHtml) {
+      document.execCommand('insertHTML', false, decodedHtml)
+    } else if (decodedPlain) {
+      const lines = decodedPlain.split(/\r?\n/)
+      document.execCommand(
+        'insertHTML',
+        false,
+        lines.map((l) => (l.trim() ? `<div>${escapeHtml(l)}</div>` : '<div><br></div>')).join('')
+      )
+    }
+    handleEditorInput()
+  }
+
   useEffect(() => {
     fetchTaskConfig()
     fetchTaskStatus()
@@ -507,6 +551,7 @@ export default function Task() {
           suppressContentEditableWarning
           data-placeholder="请在此处整理您的旅游攻略内容…"
           onInput={handleEditorInput}
+          onPaste={handleEditorPaste}
         />
       </div>
 
