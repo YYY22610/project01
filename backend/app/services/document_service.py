@@ -1,9 +1,33 @@
 """Document generation service using python-docx."""
+import re
 from html.parser import HTMLParser
 
 from docx import Document
 from docx.shared import Pt, Inches, RGBColor
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+
+# ============================================================================
+# JSON \uXXXX 转义还原
+# ----------------------------------------------------------------------------
+# 背景：AI 助手回复以 SSE(JSON) 传输，参与者从「原始响应 / 接口返回」处复制时，
+# 剪贴板里会带上 Python json.dumps() 转义后的中文（ensure_ascii=True 默认行为），
+# 例如「上午」变成「上午」。这些转义若直接写进 .docx，Word 里就是满屏乱码。
+#
+# 与前端 Task.tsx 的 onPaste 拦截形成双保险：
+#   - 前端：粘贴瞬间解码，所见即所得；
+#   - 后端：生成文档前再兜底解码，覆盖「历史草稿 / 绕开前端 / 浏览器扩展」等路径。
+#
+# 仅还原 \\uXXXX 四位十六进制转义，不影响正文中真实的反斜杠序列。
+# ============================================================================
+_UNICODE_ESCAPE_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def decode_unicode_escapes(text: str) -> str:
+    """把 JSON 的 \\uXXXX 转义序列还原为真实字符。"""
+    if not text or "\\u" not in text:
+        return text
+    return _UNICODE_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 16)), text)
 
 
 class _HtmlToDocx(HTMLParser):
@@ -127,6 +151,8 @@ def generate_docx(file_path: str, title: str, content: str, format: str = "text"
     format='text': parse plain text with lightweight markdown-ish markers
                    (# heading, - bullet, N. numbered list).
     format='html': parse HTML produced by the rich-text editor.
+
+    生成前统一还原 JSON \\uXXXX 转义，避免参与者从原始响应处复制内容导致 Word 乱码。
     """
     doc = Document()
 
@@ -137,15 +163,17 @@ def generate_docx(file_path: str, title: str, content: str, format: str = "text"
     font.size = Pt(11)
 
     # Title
-    heading = doc.add_heading(title, level=0)
+    heading = doc.add_heading(decode_unicode_escapes(title), level=0)
     heading.alignment = WD_ALIGN_PARAGRAPH.CENTER
+
+    content = decode_unicode_escapes(content or "")
 
     if format == "html":
         parser = _HtmlToDocx(doc)
-        parser.feed(content or "")
+        parser.feed(content)
     else:
         # Parse and add content (legacy plain-text behaviour)
-        for line in (content or "").split("\n"):
+        for line in content.split("\n"):
             line = line.strip()
             if not line:
                 continue
