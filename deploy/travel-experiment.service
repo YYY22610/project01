@@ -1,11 +1,13 @@
 # =====================================================================
-# systemd 托管单元（Linux 服务器）
+# systemd 托管单元（Linux 服务器 · 路径已按 /opt/app/project01 填好）
+#
 # 放在 /etc/systemd/system/travel-experiment.service，然后：
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now travel-experiment
 # 崩溃自动重启；日志： journalctl -u travel-experiment -f
 #
-# 注意 WorkingDirectory / 路径按实际部署位置修改。
+# ⚠️ 必须保持 --workers 1：提醒调度器在进程内运行且无行锁，
+#    多 worker 会导致重复发送提醒邮件。
 # =====================================================================
 [Unit]
 Description=Travel Experiment Platform Backend
@@ -14,8 +16,8 @@ After=network.target postgresql.service
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/path/to/travel-experiment-platform/backend
-ExecStart=/path/to/travel-experiment-platform/backend/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --log-level info
+WorkingDirectory=/opt/app/project01/backend
+ExecStart=/opt/app/project01/backend/venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 1 --log-level info
 Environment=PYTHONUNBUFFERED=1
 Restart=on-failure
 RestartSec=3
