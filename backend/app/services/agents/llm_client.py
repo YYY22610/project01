@@ -5,9 +5,53 @@ Otherwise, uses MockLLMClient that simulates responses based on keywords.
 """
 import json
 import asyncio
+import logging
 import httpx
+from contextlib import asynccontextmanager
 from typing import AsyncGenerator
 from app.config import settings
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------- 限流保护
+# DashScope(Qwen/OpenAI 兼容)有 QPS 限制，多个参与者同时对话时，
+# 单次聊天 + MOA 群辩会短时间并发打出大量 LLM 请求，容易触发 429(限流)，
+# 导致正在对话的参与者被中断——这会污染实验数据。
+#
+# 用「进程级信号量」把同时在飞的 LLM 请求数限制在安全阈值内：
+# 超出的请求排队等待，而不是直接打上游被拒。
+# 单实例部署下这是足够的（与 --workers 1 的约束一致）。
+# ⚠️ 若将来改多实例部署，信号量不跨进程，需要换成 Redis 等共享限流器。
+_llm_semaphore: asyncio.Semaphore | None = None
+# 等待信号量的最长秒数：超过则快速失败，避免请求无限排队后超时。
+_LLM_ACQUIRE_TIMEOUT = float(getattr(settings, "LLM_CONCURRENCY_WAIT_TIMEOUT", 180))
+
+
+def _get_llm_semaphore() -> asyncio.Semaphore:
+    """惰性创建 LLM 并发信号量（必须在事件循环内创建，故不能放模块导入期）。"""
+    global _llm_semaphore
+    if _llm_semaphore is None:
+        limit = max(1, int(getattr(settings, "LLM_MAX_CONCURRENCY", 5)))
+        _llm_semaphore = asyncio.Semaphore(limit)
+        logger.info("LLM 并发限流已启用，最大并发=%d，等待超时=%ss", limit, _LLM_ACQUIRE_TIMEOUT)
+    return _llm_semaphore
+
+
+@asynccontextmanager
+async def _llm_slot():
+    """获取一个 LLM 调用许可；等待超时则抛出，调用方按现有错误路径返回友好提示。"""
+    sem = _get_llm_semaphore()
+    try:
+        await asyncio.wait_for(sem.acquire(), timeout=_LLM_ACQUIRE_TIMEOUT)
+    except asyncio.TimeoutError:
+        raise RuntimeError(
+            "LLM 请求排队超时：当前并发较高，请稍后重试。"
+        ) from None
+    try:
+        yield
+    finally:
+        sem.release()
 
 
 class MockLLMClient:
@@ -88,6 +132,15 @@ class RealLLMClient:
     _TRANSIENT = (httpx.ReadTimeout, httpx.ConnectTimeout, httpx.ConnectError, httpx.RemoteProtocolError)
 
     async def chat(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
+        """对外入口：先过并发限流，再执行真实请求。
+
+        限流在此处（而非 _chat_uncapped）统一生效，单助理 chat 与 MOA 群辩
+        多 Agent 的每一次调用都会经过，排队时不会打断正在进行的对话。
+        """
+        async with _llm_slot():
+            return await self._chat_uncapped(messages, tools)
+
+    async def _chat_uncapped(self, messages: list[dict], tools: list[dict] | None = None) -> dict:
         headers = {
             "Authorization": f"Bearer {settings.LLM_API_KEY}",
             "Content-Type": "application/json",

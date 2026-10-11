@@ -37,6 +37,14 @@ class Settings(BaseSettings):
     # 此时若 LLM_API_KEY 为空将拒绝启动（防止用 Mock 的虚假回答污染数据）。
     ALLOW_MOCK_LLM: bool = True
 
+    # LLM 并发限流：同时在飞的真实 LLM 请求上限。
+    # DashScope(Qwen/OpenAI 兼容)有 QPS 限制，多人同时对话（含 MOA 群辩多 Agent）
+    # 会短时并发打出大量请求，超限会返回 429 打断正在对话的参与者、污染实验数据。
+    # 超出部分排队等待，而非直接打上游。20 人规模实测 5 较稳妥。
+    LLM_MAX_CONCURRENCY: int = 5
+    # 等待并发许可的最长秒数，超时返回友好提示，避免无限排队。
+    LLM_CONCURRENCY_WAIT_TIMEOUT: float = 180.0
+
     # Email
     # 发信后端：smtp / resend / mock（留空则按「有 SMTP 配置→有 Resend key→mock」自动选择）
     EMAIL_BACKEND: str = ""
