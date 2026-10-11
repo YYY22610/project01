@@ -1,10 +1,16 @@
 # =====================================================================
-# systemd 托管单元（Linux 服务器 · 路径已按 /opt/app/project01 填好）
+# systemd 托管单元（Linux 服务器）
 #
 # 放在 /etc/systemd/system/travel-experiment.service，然后：
 #   sudo systemctl daemon-reload
 #   sudo systemctl enable --now travel-experiment
 # 崩溃自动重启；日志： journalctl -u travel-experiment -f
+#
+# ⚠️ 路径说明：
+#   若用 git clone 到 /opt/app/project01，本文件默认路径可直接使用；
+#   若用 zip 解压方式（代码直接落在 /opt/app），安装时需修正路径：
+#     sed -i 's|/opt/app/project01|/opt/app|g' /etc/systemd/system/travel-experiment.service
+#   另：若代码属主为 root，需把 User=www-data 改为 User=root，否则无权限读取。
 #
 # ⚠️ 必须保持 --workers 1：提醒调度器在进程内运行且无行锁，
 #    多 worker 会导致重复发送提醒邮件。
