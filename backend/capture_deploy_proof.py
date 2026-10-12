@@ -29,26 +29,42 @@ def main():
         page = ctx.new_page()
         page.on("pageerror", lambda e: errors.append(str(e)[:200]))
 
-        # 1) 后台登录页
+        # 1) 参与者登录页（本平台参与者端为单一入口：邮箱智能识别，
+        #    已注册邮箱直接登录，未注册引导注册，免密）
+        page.goto(f"{FRONTEND}/register", wait_until="networkidle", timeout=30000)
+        page.wait_for_timeout(1500)
+        page.screenshot(path=os.path.join(OUT, "01_user_login.png"), full_page=True)
+        print("[ok] 01 参与者登录页/注册入口")
+
+        # 2) 参与者注册页（同一入口的注册态）
+        try:
+            page.fill('input[type="email"], input[type="text"]', "demo_participant@example.com")
+            page.wait_for_timeout(600)
+            page.screenshot(path=os.path.join(OUT, "02_user_register.png"), full_page=True)
+            print("[ok] 02 参与者注册（邮箱输入态）")
+        except Exception as e:
+            print("[warn] 注册页填充异常:", str(e)[:150])
+
+        # 3) 后台登录页
         page.goto(f"{FRONTEND}/admin/login", wait_until="networkidle", timeout=30000)
         page.wait_for_timeout(1200)
-        page.screenshot(path=os.path.join(OUT, "01_admin_login.png"), full_page=True)
-        print("[ok] 01 后台登录页")
+        page.screenshot(path=os.path.join(OUT, "03_admin_login.png"), full_page=True)
+        print("[ok] 03 后台登录页")
 
-        # 2) 管理员登录
+        # 4) 管理员登录
         try:
             page.fill('input[type="text"], input[name="username"], input[placeholder*="用户名"], input[placeholder*="账号"]', "admin")
             page.fill('input[type="password"]', "Admin2026")
             page.wait_for_timeout(300)
-            page.screenshot(path=os.path.join(OUT, "02_admin_login_filled.png"), full_page=True)
+            page.screenshot(path=os.path.join(OUT, "04_admin_login_filled.png"), full_page=True)
             page.click('button[type="submit"]')
             page.wait_for_timeout(3000)
-            print("[ok] 02 管理员登录，当前路径:", page.url)
+            print("[ok] 04 管理员登录，当前路径:", page.url)
         except Exception as e:
             print("[warn] 登录交互异常:", str(e)[:200])
 
-        # 3) 各后台功能页
-        for i, (name, path) in enumerate(ADMIN_PAGES, start=3):
+        # 5) 各后台功能页
+        for i, (name, path) in enumerate(ADMIN_PAGES, start=5):
             try:
                 page.goto(f"{FRONTEND}{path}", wait_until="networkidle", timeout=30000)
                 page.wait_for_timeout(1500)

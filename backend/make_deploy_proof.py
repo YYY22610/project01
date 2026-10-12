@@ -158,9 +158,26 @@ def main():
 
     # 三、系统登录
     h(doc, "三、系统登录", 1)
-    doc.add_paragraph("参与者通过邮箱注册并登录实验平台。以下为登录入口与后台管理员登录。")
-    add_shot(doc, "01_admin_login.png", "图 1  管理员后台登录页（/admin/login）")
-    add_shot(doc, "02_admin_login_filled.png", "图 2  管理员凭据校验通过，进入实验管理后台")
+    doc.add_paragraph(
+        "平台提供双端登录入口：参与者端采用邮箱免密登录（实验设计要求降低被试门槛），"
+        "管理员端使用独立账号密码进入后台。"
+    )
+
+    doc.add_heading("3.1  参与者登录与注册", level=2)
+    doc.add_paragraph(
+        "参与者访问平台后进入邮箱登录页：输入已注册邮箱即可直接登录并进入知情同意与基本信息环节；"
+        "若邮箱尚未注册，输入后会引导至注册流程完成账号创建。该入口同时提供「管理员入口」链接，"
+        "便于实验管理人员分流。"
+    )
+    add_shot(doc, "01_user_login.png", "图 1  参与者邮箱登录页（已注册邮箱直登，未注册引导注册）")
+    add_shot(doc, "02_user_register.png", "图 2  参与者注册：邮箱输入与注册引导")
+
+    doc.add_heading("3.2  管理员登录", level=2)
+    doc.add_paragraph(
+        "管理员通过独立入口 /admin/login 登录，凭账号密码校验后进入实验管理后台。"
+    )
+    add_shot(doc, "03_admin_login.png", "图 3  管理员后台登录页（/admin/login）")
+    add_shot(doc, "04_admin_login_filled.png", "图 4  管理员凭据校验通过，进入实验管理后台")
 
     # 四、后台管理核心功能
     h(doc, "四、后台管理核心功能", 1)
@@ -175,27 +192,27 @@ def main():
         "展示三组样本量与均衡比例、任务完成率、平均用时、异常数、"
         "AI 助理 API 状态与最近注册一览。"
     )
-    add_shot(doc, "03_admin_dashboard.png", "图 3  实验监控看板：分组样本、AI 助理状态、最近注册")
+    add_shot(doc, "05_admin_dashboard.png", "图 5  实验监控看板：分组样本、AI 助理状态、最近注册")
 
     doc.add_heading("4.2  参与者管理", level=2)
     doc.add_paragraph(
         "按邮箱/组别/状态检索与筛选全部参与者，可查看详情、手动调整分组或删除。"
     )
-    add_shot(doc, "04_admin_participants.png", "图 4  参与者管理：组别标签、任务状态、分页与检索")
+    add_shot(doc, "06_admin_participants.png", "图 6  参与者管理：组别标签、任务状态、分页与检索")
 
     doc.add_heading("4.3  任务提交与评分", level=2)
     doc.add_paragraph("汇总并查看各参与者提交的任务成果（行程方案），并进行评分。")
-    add_shot(doc, "05_admin_submissions.png", "图 5  任务提交与评分")
+    add_shot(doc, "07_admin_submissions.png", "图 7  任务提交与评分")
 
     doc.add_heading("4.4  问卷配置", level=2)
     doc.add_paragraph(
         "管理实验问卷题目，支持题目编辑、启用停用与分组适用范围配置。"
     )
-    add_shot(doc, "06_admin_questionnaire.png", "图 6  问卷配置与回收统计")
+    add_shot(doc, "08_admin_questionnaire.png", "图 8  问卷配置与回收统计")
 
     doc.add_heading("4.5  系统配置", level=2)
     doc.add_paragraph("配置实验任务参数（目的地、天数、预算等）与 AI 助理服务开关。")
-    add_shot(doc, "08_admin_settings.png", "图 7  系统配置")
+    add_shot(doc, "10_admin_settings.png", "图 9  系统配置")
 
     # 五、行为日志
     h(doc, "五、行为日志", 1)
@@ -204,7 +221,7 @@ def main():
         "覆盖 AI 消息、工具调用、用户干预、页面停留时长、实验阶段等维度，"
         "支持按用户、操作类型检索与分页浏览。"
     )
-    add_shot(doc, "07_admin_logs.png", "图 8  行为日志：按用户统计条数、检索筛选与分页")
+    add_shot(doc, "09_admin_logs.png", "图 10  行为日志：按用户统计条数、检索筛选与分页")
 
     # 六、数据汇总
     h(doc, "六、实验数据汇总", 1)
