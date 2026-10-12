@@ -81,10 +81,6 @@ export default function AdminLogin() {
           >
             {loading ? '登录中...' : '登录'}
           </button>
-
-          <div className="text-center text-sm text-gray-400">
-            演示账号：admin / admin123
-          </div>
         </form>
 
         <div className="text-center mt-4">
