@@ -9,11 +9,10 @@ export const authApi = {
     api.post('/auth/login', { email, password }),
   loginByEmail: (email: string) =>
     api.post('/auth/login-by-email', { email }),
-  /** 签署知情同意 + 提交前置问卷（10 题），原子接口 */
-  consent: (agreed: boolean, survey: {
-    q1: string; q2: string; q3: string; q4: string[]; q5: string;
-    q6: string; q7: string; q8: string; q9: string; q10: string;
-  }) => api.post('/auth/consent', { agreed, survey }),
+  /** 签署知情同意 + 提交前置问卷，原子接口。
+   *  题目来自 GET /questionnaire/items?phase=pre，这里原样回传答案。 */
+  consent: (agreed: boolean, responses: { item_id: string; response_value: string }[]) =>
+    api.post('/auth/consent', { agreed, responses }),
   demographics: (data: any) => api.post('/auth/demographics', data),
   me: () => api.get<User>('/auth/me'),
   adminLogin: (username: string, password: string) =>
@@ -254,7 +253,9 @@ export const groupApi = {
 
 // Questionnaire
 export const questionnaireApi = {
-  items: () => api.get<QuestionnaireItem[]>('/questionnaire/items'),
+  /** phase='pre' 前置问卷（知情同意页）| 'post' 后置问卷（任务完成后） */
+  items: (phase: 'pre' | 'post' = 'post') =>
+    api.get<QuestionnaireItem[]>('/questionnaire/items', { params: { phase } }),
   submit: (responses: { item_id: string; response_value: string }[]) =>
     api.post('/questionnaire/submit', { responses }),
 }

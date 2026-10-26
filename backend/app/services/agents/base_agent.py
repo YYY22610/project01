@@ -86,15 +86,25 @@ class BaseAgent:
         for msg in history:
             messages.append({"role": msg.role, "content": msg.content or ""})
 
-        # 3. Call LLM
-        llm_response = await self.llm.chat(messages, self.tool_defs)
-
-        # 4. Handle tool calls
-        tool_calls = llm_response.get("tool_calls")
+        # 3-4. LLM ↔ 工具 多轮循环（ReAct）
+        #
+        # ⚠️ 这里必须是循环，不能只做一轮。云端模型（Qwen3 系列）在拿到工具结果后
+        # 经常判断「信息还不够」而再次发起工具调用（例如先 search_attractions("杭州")，
+        # 再 search_attractions("杭州美食推荐")）。原实现只在首轮处理 tool_calls，
+        # 第二轮请求不携带 tools，模型的 tool_calls 于是被静默丢弃、content 为空，
+        # 最终落进 "操作完成。" 兜底——用户看到的就是一个没有任何内容的回复。
         generated_doc_url: str | None = None
         generated_doc_name: str | None = None
-        if tool_calls:
-            # 干预检查点①：首轮 LLM 返回后、执行任何工具前
+        max_rounds = 5          # 上限防止模型反复调工具导致账单失控
+        llm_response: dict = {}
+        tool_calls: list | None = None
+        for _round in range(max_rounds):
+            llm_response = await self.llm.chat(messages, self.tool_defs)
+            tool_calls = llm_response.get("tool_calls")
+            if not tool_calls:
+                break
+
+            # 干预检查点①：每轮 LLM 返回后、执行任何工具前
             if await _is_cancelled():
                 yield {"type": "cancelled", "data": {
                     "message": "操作已被你中断，可重新下达指令。"
@@ -164,18 +174,21 @@ class BaseAgent:
                     "content": json.dumps(tool_result, ensure_ascii=False),
                 })
 
-            # 干预检查点③：二次 LLM 调用（生成最终答复）前
+            # 干预检查点③：进入下一轮 LLM 调用（消化工具结果）前
             if await _is_cancelled():
                 yield {"type": "cancelled", "data": {
                     "message": "操作已被你中断，可重新下达指令。"
                 }}
                 return
 
-            # Second LLM call with tool results
-            llm_response2 = await self.llm.chat(messages, None)
-            final_content = llm_response2.get("content") or "操作完成。"
-        else:
-            final_content = llm_response.get("content") or ""
+            # 下一轮循环会带着完整工具结果重新请求模型
+
+        # 循环结束：final_content 取最后一轮的自然语言答复。
+        # 兜底文案只在真的没拿到任何文本时使用（例如模型始终只调工具不输出文字），
+        # 正常情况下不会再出现——多轮循环会把工具结果消化成正文。
+        final_content = (llm_response.get("content") or "").strip()
+        if not final_content:
+            final_content = "操作已完成，但我没能整理出文字说明。请再具体说一下你想看哪部分内容？"
 
         # 若本轮生成了 Word 文档，在最终回复末尾追加可点击的下载链接，
         # 确保用户能真正看到并下载该文档，而不是只看到一个文件名。

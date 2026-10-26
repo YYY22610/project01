@@ -4,6 +4,7 @@ import csv
 import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, func, and_, cast, String
@@ -697,29 +698,41 @@ async def update_config(
 
 
 def _question_type_to_frontend(item: QuestionnaireItem) -> str:
-    """Map DB question_type + scale_level to frontend type tokens."""
+    """Map DB question_type + scale_level + options to frontend type tokens."""
     if item.question_type.value == "likert":
+        # 双极量表：options 里存了左右锚点（{"left":..., "right":...}）
+        if isinstance(item.options, dict) and "left" in item.options:
+            return "bipolar5"
         return f"likert{item.scale_level or 5}"
+    if item.question_type.value == "multiple":
+        return "multiple_choice"
     if item.question_type.value == "choice":
-        # DB does not distinguish single/multiple; prefer single_choice when options exist.
+        # DB 无 options 时无法区分单选/多选，保守按单选呈现
         return "single_choice" if item.options else "choice"
     return item.question_type.value
 
 
-def _frontend_type_to_db(payload_type: str, scale_level: int | None = None) -> tuple:
-    """Return (QuestionType, scale_level) from frontend type token."""
+def _frontend_type_to_db(payload_type: str, scale_level: int | None = None,
+                         options: Any = None) -> tuple:
+    """Return (QuestionType, scale_level, normalized_options) from a frontend type token."""
     from app.models.questionnaire import QuestionType
 
     if payload_type == "likert5":
-        return QuestionType.likert, 5
+        return QuestionType.likert, 5, None
     if payload_type == "likert7":
-        return QuestionType.likert, 7
-    if payload_type in ("single_choice", "multiple_choice"):
-        return QuestionType.choice, scale_level or 5
+        return QuestionType.likert, 7, None
+    if payload_type == "bipolar5":
+        # 双极锚点必须保留，否则参与者看不到左右端词
+        anchors = options if isinstance(options, dict) else {"left": "", "right": ""}
+        return QuestionType.likert, 5, anchors
+    if payload_type == "multiple_choice":
+        return QuestionType.multiple, 0, options
+    if payload_type in ("single_choice", "choice"):
+        return QuestionType.choice, 0, options
     if payload_type == "text":
-        return QuestionType.text, scale_level or 5
+        return QuestionType.text, 0, None
     # Fallback
-    return QuestionType.likert, scale_level or 5
+    return QuestionType.likert, scale_level or 5, None
 
 
 def _item_to_admin_response(item: QuestionnaireItem) -> dict:
@@ -733,6 +746,9 @@ def _item_to_admin_response(item: QuestionnaireItem) -> dict:
         "sort_order": item.sort_order,
         "is_active": item.is_active,
         "applicable_groups": item.applicable_groups,
+        "phase": item.phase,
+        "is_reverse": bool(item.is_reverse),
+        "section_note": item.section_note,
     }
 
 
@@ -753,13 +769,14 @@ async def create_questionnaire_item(
     db: AsyncSession = Depends(get_db),
 ):
     """Create a new questionnaire item."""
-    question_type, scale_level = _frontend_type_to_db(req.type, req.scale_level)
+    question_type, scale_level, options = _frontend_type_to_db(req.type, req.scale_level, req.options)
 
-    # Auto-assign sort_order to end if not provided
+    # Auto-assign sort_order to end of its phase if not provided
     sort_order = req.sort_order
     if sort_order == 0:
         max_order = (await db.execute(
             select(func.coalesce(func.max(QuestionnaireItem.sort_order), 0))
+            .where(QuestionnaireItem.phase == req.phase)
         )).scalar()
         sort_order = int(max_order) + 1
 
@@ -767,11 +784,14 @@ async def create_questionnaire_item(
         construct=req.construct,
         question_text=req.text,
         question_type=question_type,
-        options=req.options,
+        options=options,
         scale_level=scale_level,
         sort_order=sort_order,
         is_active=req.is_active,
         applicable_groups=req.applicable_groups,
+        phase=req.phase,
+        is_reverse=req.is_reverse,
+        section_note=req.section_note,
     )
     db.add(item)
     await db.commit()
@@ -797,13 +817,17 @@ async def update_questionnaire_item(
     if req.text is not None:
         item.question_text = req.text
     if req.type is not None or req.scale_level is not None:
-        question_type, scale_level = _frontend_type_to_db(
+        question_type, scale_level, options = _frontend_type_to_db(
             req.type or _question_type_to_frontend(item),
             req.scale_level if req.scale_level is not None else item.scale_level,
+            # 类型转换可能重写 options（如切到 bipolar5 需要锚点），
+            # 但传 None 时保留原有 options，避免误清空已配置的单选/双极选项
+            req.options if req.options is not None else item.options,
         )
         item.question_type = question_type
         item.scale_level = scale_level
-    if req.options is not None:
+        item.options = options
+    elif req.options is not None:
         item.options = req.options
     if req.sort_order is not None:
         item.sort_order = req.sort_order
@@ -811,6 +835,12 @@ async def update_questionnaire_item(
         item.is_active = req.is_active
     if req.applicable_groups is not None:
         item.applicable_groups = req.applicable_groups
+    if req.phase is not None:
+        item.phase = req.phase
+    if req.is_reverse is not None:
+        item.is_reverse = req.is_reverse
+    if req.section_note is not None:
+        item.section_note = req.section_note
 
     await db.commit()
     await db.refresh(item)
@@ -949,64 +979,90 @@ async def export_scores(admin: dict = Depends(get_current_admin), db: AsyncSessi
     )
 
 
-# 问卷构念中文标签（用于导出列名）
+# 问卷构念中文标签 —— 导出列名与取值都用这张表驱动，避免两处硬编码不同步。
+# 与 frontend/src/constants/questionnaire.ts 的 CONSTRUCT_LABELS 保持一致。
+# 顺序即导出列顺序：前置问卷构念在前，后置问卷在后，操纵检验与开放题垫底。
 QUESTIONNAIRE_CONSTRUCT_LABELS = {
-    "trust": "信任",
-    "autonomy": "自主",
-    "satisfaction": "满意",
-    "task_load": "负荷",
-    "future_use": "未来意愿",
+    # 前置问卷
+    "demographic": "人口统计",
+    "ai_experience": "AI使用经验",
+    "agent_awareness": "智能体认知",
+    "social_influence": "社会影响",
+    "anthropomorphism": "感知拟人化",
+    # 后置问卷
+    "hedonic_motivation": "享乐动机",
+    "performance_expectancy": "绩效期望",
+    "effort_expectancy": "努力期望",
+    "perceived_risk": "感知风险",
+    "affective_experience": "情绪体验",
+    "acceptance_intention": "接受意愿",
+    "resistance_intention": "拒绝意愿",
+    # 通用（非数值，原文汇总）
     "manipulation_check": "操纵检验",
+    "open_feedback": "其他反馈",
 }
 
 
 async def _compute_questionnaire_scores(db: AsyncSession) -> dict:
     """Aggregate questionnaire responses per user.
 
-    Returns: { user_id: { construct: avg, '_overall': overall_avg,
-                           'manipulation_check': raw_text } }.
+    Returns: { user_id: { construct: avg | "raw text", '_overall': avg | None } }.
 
-    Likert (numeric) responses are averaged per construct. The manipulation_check
-    construct is *categorical* (choice questions like "是否使用AI助理"), so its raw
-    text answers are preserved verbatim (joined by " | ") instead of being averaged —
-    otherwise the column would always be empty. This is the key condition-comprehension
-    check for the single-blind design.
+    Rules:
+    - **Numeric (Likert) constructs** are averaged per construct. Items flagged
+      `is_reverse` are flipped first as `scale_level + 1 - x` so that a
+      reverse-worded item points the same way as its正向 counterparts
+      (e.g. Q12 「影响我行为的人不希望我使用…」 is scored 6 - x on a 5-point scale).
+      Per-item raw answers stay untouched in questionnaire_responses.
+    - **Categorical constructs** (choice / multiple / text: 人口统计、AI 经验、
+      操纵检验、开放题) keep their raw text, joined by " | ". Averaging them
+      would silently produce an empty column — this is the condition-comprehension
+      check for the single-blind design.
+    - `_overall` averages only numeric constructs; mixing 5-point scales with
+      categorical answers would make it meaningless.
     """
     result = await db.execute(
         select(
             QuestionnaireResponse.user_id,
             QuestionnaireItem.construct,
+            QuestionnaireItem.question_type,
+            QuestionnaireItem.scale_level,
+            QuestionnaireItem.is_reverse,
             QuestionnaireResponse.response_value,
         ).join(QuestionnaireItem, QuestionnaireResponse.item_id == QuestionnaireItem.id)
     )
-    grouped: dict = defaultdict(lambda: defaultdict(list))   # numeric Likert means
-    manip: dict = defaultdict(list)                          # raw text for manipulation_check
-    for user_id, construct, value in result.all():
+    numeric: dict = defaultdict(lambda: defaultdict(list))   # construct -> [scores]
+    raw: dict = defaultdict(lambda: defaultdict(list))       # construct -> [raw strings]
+
+    for user_id, construct, q_type, scale_level, is_reverse, value in result.all():
         uid = str(user_id)  # key as str to match str(user.id) lookups at export time
-        if construct == "manipulation_check":
-            text = (str(value).strip() if value is not None else "")
+        text = (str(value).strip() if value is not None else "")
+
+        # Categorical: keep raw text verbatim, never averaged
+        if q_type != "likert":
             if text:
-                manip[uid].append(text)
+                raw[uid][construct].append(text)
             continue
+
         try:
-            num = int(str(value).strip())
+            num = int(text)
         except (ValueError, TypeError):
             continue
-        grouped[uid][construct].append(num)
+        if is_reverse and scale_level:
+            num = scale_level + 1 - num
+        numeric[uid][construct].append(num)
 
     out: dict = {}
-    # Users with Likert responses
-    for uid, constructs in grouped.items():
-        per = {c: round(sum(v) / len(v), 2) for c, v in constructs.items()}
-        all_vals = [x for v in constructs.values() for x in v]
+    for uid in set(numeric) | set(raw):
+        per: dict = {}
+        all_vals: list[int] = []
+        for construct, vals in numeric.get(uid, {}).items():
+            per[construct] = round(sum(vals) / len(vals), 2)
+            all_vals.extend(vals)
+        for construct, texts in raw.get(uid, {}).items():
+            per[construct] = " | ".join(texts)
         per["_overall"] = round(sum(all_vals) / len(all_vals), 2) if all_vals else None
-        if manip.get(uid):
-            per["manipulation_check"] = " | ".join(manip[uid])
         out[uid] = per
-    # Users who only answered the manipulation-check questions (no Likert)
-    for uid, vals in manip.items():
-        if uid not in out:
-            out[uid] = {"_overall": None, "manipulation_check": " | ".join(vals)}
     return out
 
 
@@ -1042,7 +1098,7 @@ async def export_all(
         "Duration_Ms", "Submitted_At",
         "Scenic", "Historic", "Rarity", "Scale", "Integrity", "Fame", "Season",
         "Eco", "Total_Score", "Quality_Score", "Reminder_Correct", "Notes",
-        "Questionnaire_Overall", "信任", "自主", "满意", "负荷", "未来意愿", "操纵检验",
+        "Questionnaire_Overall", *QUESTIONNAIRE_CONSTRUCT_LABELS.values(),
     ])
     for user, sub, score in rows:
         qs = q_scores.get(str(user.id), {})
@@ -1072,12 +1128,7 @@ async def export_all(
             score.reminder_correct if score else "",
             (score.notes or "") if score else "",
             qs.get("_overall", "") if qs else "",
-            qs.get("trust", "") if qs else "",
-            qs.get("autonomy", "") if qs else "",
-            qs.get("satisfaction", "") if qs else "",
-            qs.get("task_load", "") if qs else "",
-            qs.get("future_use", "") if qs else "",
-            qs.get("manipulation_check", "") if qs else "",
+            *(qs.get(k, "") if qs else "" for k in QUESTIONNAIRE_CONSTRUCT_LABELS),
         ])
 
     output.seek(0)
@@ -1157,7 +1208,7 @@ async def export_all_xlsx(
         "Duration_Ms", "Submitted_At",
         "Scenic", "Historic", "Rarity", "Scale", "Integrity", "Fame", "Season", "Eco",
         "Total_Score", "Quality_Score", "Reminder_Correct", "Notes",
-        "Questionnaire_Overall", "信任", "自主", "满意", "负荷", "未来意愿", "操纵检验",
+        "Questionnaire_Overall", *QUESTIONNAIRE_CONSTRUCT_LABELS.values(),
     ])
     for user, sub, score in combined.all():
         qs = q_scores.get(str(user.id), {})
@@ -1187,12 +1238,7 @@ async def export_all_xlsx(
             score.reminder_correct if score else "",
             (score.notes or "") if score else "",
             qs.get("_overall", "") if qs else "",
-            qs.get("trust", "") if qs else "",
-            qs.get("autonomy", "") if qs else "",
-            qs.get("satisfaction", "") if qs else "",
-            qs.get("task_load", "") if qs else "",
-            qs.get("future_use", "") if qs else "",
-            qs.get("manipulation_check", "") if qs else "",
+            *(qs.get(k, "") if qs else "" for k in QUESTIONNAIRE_CONSTRUCT_LABELS),
         ])
     style_header(ws1)
 

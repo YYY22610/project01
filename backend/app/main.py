@@ -58,7 +58,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="Travel Experiment Platform API",
+    title="人机协作决策实验平台 API",
     description="人机协作决策实验平台 — 三组间对照实验系统",
     version="1.0.0",
     lifespan=lifespan,

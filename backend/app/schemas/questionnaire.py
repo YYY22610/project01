@@ -31,6 +31,9 @@ class QuestionnaireItemResponse(BaseModel):
     scale_level: int
     sort_order: int
     applicable_groups: Optional[str] = None
+    phase: str = "post"
+    is_reverse: bool = False
+    section_note: Optional[str] = None
 
 
 class QuestionnaireSubmitRequest(BaseModel):
@@ -61,6 +64,9 @@ class QuestionnaireItemAdminCreate(BaseModel):
     sort_order: int = 0
     is_active: bool = True
     applicable_groups: Optional[str] = "ALL"
+    phase: str = "post"
+    is_reverse: bool = False
+    section_note: Optional[str] = None
 
 
 class QuestionnaireItemAdminUpdate(BaseModel):
@@ -72,3 +78,6 @@ class QuestionnaireItemAdminUpdate(BaseModel):
     sort_order: Optional[int] = None
     is_active: Optional[bool] = None
     applicable_groups: Optional[str] = None
+    phase: Optional[str] = None
+    is_reverse: Optional[bool] = None
+    section_note: Optional[str] = None

@@ -2,9 +2,10 @@
 端到端验证脚本：覆盖本次修复的 P0/P1 项
 - P0 #1: consent 后 JWT 含 group（AI 面板对首次会话用户可见）
 - P0 #2: 邮件真实失败不再静默记为成功（离线 mock 验证守卫可达）
-- P1 问卷: 构念对齐需求 (trust/autonomy/satisfaction/task_load/future_use/manipulation_check)，含 choice 题
+- 问卷（2026-10-14 版）：前置 20 题（phase=pre）+ 后置 34 题（phase=post），
+  含 choice / multiple / text / 双极量表 / 反向计分
 - P1 演示: demo_watch_seconds 落库
-全链路: 注册→同意→演示→任务四子任务→提交→问卷→管理后台
+全链路: 注册→前置问卷+同意→演示→任务四子任务→提交→后置问卷→管理后台
 """
 import json
 import time
@@ -71,8 +72,20 @@ def main():
     pld = jwt_payload(reg_token)
     rec("注册 token group 为 None（分组在 consent 后分配）", pld.get("group") is None, f"group={pld.get('group')}")
 
-    # ---------- 2. consent 后 JWT 含 group（P0 #1） ----------
-    st, cons = req("POST", "/api/auth/consent", token=reg_token)
+    # ---------- 2. consent + 前置问卷（题目来自 phase=pre）→ JWT 含 group（P0 #1） ----------
+    st, pre_items = req("GET", "/api/questionnaire/items?phase=pre", token=reg_token)
+    rec("前置问卷题项 200", st == 200 and len(pre_items) == 20, f"status={st} count={len(pre_items)}")
+    pre_answers = []
+    for it in pre_items:
+        if it["question_type"] == "likert":
+            v = "3"
+        elif it["question_type"] == "multiple":
+            v = it["options"][0]
+        else:
+            v = it["options"][0]
+        pre_answers.append({"item_id": it["id"], "response_value": v})
+    st, cons = req("POST", "/api/auth/consent", token=reg_token,
+                   body={"agreed": True, "responses": pre_answers})
     rec("consent 返回新 token", st == 200 and "access_token" in cons, f"status={st}")
     new_token = cons.get("access_token")
     pld2 = jwt_payload(new_token)
@@ -114,16 +127,26 @@ def main():
                         "docx_file_path": fp, "email_status": em.get("status"), "email_recipient": "friend@example.com"})
     rec("任务提交 all_completed=true", st == 200 and sub.get("all_completed") is True, f"status={st}")
 
-    # ---------- 8. 问卷（P1 构念对齐） ----------
+    # ---------- 8. 问卷（2026-10-14 版：34 题后置问卷） ----------
     st, items = req("GET", "/api/questionnaire/items", token=new_token)
-    rec("获取问卷题项 200", st == 200 and len(items) >= 14, f"status={st} count={len(items)}")
+    rec("获取问卷题项 200", st == 200 and len(items) == 34, f"status={st} count={len(items)}")
     constructs = set(i["construct"] for i in items)
-    expected = {"trust", "autonomy", "satisfaction", "task_load", "future_use", "manipulation_check"}
-    rec("P1问卷: 6 个构念齐全", expected.issubset(constructs), f"got={sorted(constructs)}")
+    expected = {
+        "manipulation_check", "hedonic_motivation", "performance_expectancy",
+        "effort_expectancy", "perceived_risk", "affective_experience",
+        "acceptance_intention", "resistance_intention", "open_feedback",
+    }
+    rec("后置问卷: 9 个构念齐全", expected.issubset(constructs), f"got={sorted(constructs)}")
     choice_items = [i for i in items if i.get("question_type") == "choice" and i.get("options")]
-    rec("P1问卷: 含选择题(操纵检验)且带选项", len(choice_items) >= 1, f"choice_count={len(choice_items)}")
-    # 提交问卷
-    responses = [{"item_id": i["id"], "response_value": ("3" if i["question_type"] == "likert" else i["options"][0])} for i in items]
+    rec("后置问卷: 含选择题(操纵检验)且带选项", len(choice_items) >= 1, f"choice_count={len(choice_items)}")
+    text_items = [i for i in items if i.get("question_type") == "text"]
+    rec("后置问卷: 含开放题(Q54)", len(text_items) == 1, f"count={len(text_items)}")
+    # 提交问卷（开放题可留空）
+    responses = [{"item_id": i["id"],
+                  "response_value": ("3" if i["question_type"] == "likert"
+                                     else "" if i["question_type"] == "text"
+                                     else i["options"][0])}
+                 for i in items]
     st, qsub = req("POST", "/api/questionnaire/submit", token=new_token, body={"responses": responses})
     rec("问卷提交 200", st == 200 and qsub.get("submitted") is True, f"status={st}")
 
@@ -144,10 +167,13 @@ def main():
         row = await conn.fetchrow("SELECT demo_watch_seconds FROM users WHERE id=$1", uid)
         wat = row["demo_watch_seconds"] if row else None
         rec("P1演示: demo_watch_seconds=42 已落库", wat == 42, f"demo_watch_seconds={wat}")
-        # 问卷构念（DB）
+        # 问卷构念（DB，跨 pre + post）
         db_const = await conn.fetch("SELECT DISTINCT construct FROM questionnaire_items")
         db_set = set(r["construct"] for r in db_const)
-        rec("P1问卷: DB 构念与需求一致", expected.issubset(db_set), f"db={sorted(db_set)}")
+        rec("问卷: DB 构念覆盖前置+后置", expected.issubset(db_set), f"db={sorted(db_set)}")
+        n_pre = await conn.fetchval("SELECT count(*) FROM questionnaire_items WHERE phase='pre'")
+        n_post = await conn.fetchval("SELECT count(*) FROM questionnaire_items WHERE phase='post'")
+        rec("问卷: DB pre=20 post=34", n_pre == 20 and n_post == 34, f"pre={n_pre} post={n_post}")
         await conn.close()
 
     asyncio.run(db_checks())

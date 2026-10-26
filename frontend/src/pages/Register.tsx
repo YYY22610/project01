@@ -68,6 +68,7 @@ export default function Register() {
     <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-green-50 to-blue-100 px-4 py-8">
       <div className="max-w-md w-full bg-white rounded-2xl shadow-xl p-8">
         <div className="text-center mb-6">
+          <p className="text-base font-semibold text-blue-700 mb-1">人机协作决策实验平台</p>
           <h1 className="text-2xl font-bold text-gray-800">
             {isLogin ? '邮箱登录' : '注册账号'}
           </h1>

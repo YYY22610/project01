@@ -2,19 +2,33 @@
 import os
 from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.deps import get_current_user
-from app.models.user import User, UserStatus
+from app.models.user import User, UserStatus, ExperimentGroup
 from app.models.task_submission import TaskSubmission
 from app.models.questionnaire import QuestionnaireResponse
 from app.models.system_config import SystemConfig
+from app.models.chat_message import ChatMessage
+from app.models.behavior_log import BehaviorLog, ActionType
 from app.schemas.task import TaskConfigResponse, TaskStartResponse, TaskSubmitRequest, TaskSubmitResponse, DemoCompleteRequest
 from app.services.state_machine import transition_status
 
 router = APIRouter()
+
+# 「搜索景点」任务的两种达标方式：
+#   1) 手动路径（H 组）：在搜索引擎中实际执行过检索 → 由前端上报 searchTriggered
+#   2) AI 路径（有 AI 助手的组）：向 AI 助手发出过至少一条消息即视为达标
+#
+# AI 路径必须在服务端判定。原实现信任前端上报的 task1_search 布尔值，
+# 但前端 hasUsedAI 存在 localStorage 中，清缓存或直接调接口都能伪造，
+# 会把「未与 AI 对话」的样本污染成已完成。故此处改为查询服务端落库记录：
+#   - 单聊 SOA/MOA：base_agent.chat 会写 chat_messages(role='user')
+#   - MOA 群辩：moa_group 只写 behavior_log(action_type=AGENT_MESSAGE)
+# 两个来源都要查，否则 MOA 组仅在群辩中提问的参与者会被误判为未完成。
+AI_SEARCH_GROUPS = [ExperimentGroup.SOA, ExperimentGroup.MOA]
 
 # 参与者可提交的 docx 目录（与 document.py 生成目录一致）
 _DOCS_DIR = os.path.abspath(
@@ -46,6 +60,45 @@ async def _get_config_value(db: AsyncSession, key: str, default: str = "") -> st
     result = await db.execute(select(SystemConfig).where(SystemConfig.key == key))
     config = result.scalar_one_or_none()
     return config.value if config else default
+
+
+def _group_supports_ai(user: User) -> bool:
+    """该用户所在组是否配置了 AI 助手（决定 AI 对话能否计入「搜索景点」）。"""
+    return user.group in AI_SEARCH_GROUPS
+
+
+async def _has_talked_to_ai(db: AsyncSession, user_id) -> bool:
+    """服务端判定：该用户是否已向 AI 助手发出过至少一条消息。
+
+    合并两个数据来源，任一命中即为 True：
+      1. chat_messages 中 role='user' 的记录 —— 单聊（SOA/MOA 对单个助理提问）
+      2. behavior_logs 中 action_type=AGENT_MESSAGE 的记录 —— MOA 智囊团群辩
+         （群辩不写 chat_messages，只写行为日志，漏查会导致 MOA 组误判）
+
+    以用户维度而非单次会话维度查询：刷新页面、换会话都不影响判定结果。
+    """
+    # behavior_logs.action_type 是 PG 原生枚举 actiontype，库中存枚举名（AGENT_MESSAGE）。
+    # asyncpg 会把参数声明为 varchar，`varchar = actiontype` 无匹配操作符，
+    # 必须两侧同类型比较：列先转 text 与字面量比（不依赖参数类型推断，最稳）。
+    said = await db.execute(
+        text(
+            """
+            SELECT (
+                EXISTS (
+                    SELECT 1 FROM chat_messages
+                     WHERE user_id = :uid AND role = 'user'
+                )
+                OR EXISTS (
+                    SELECT 1 FROM behavior_logs
+                     WHERE user_id = :uid
+                       AND action_type::text = :ai_action
+                )
+            ) AS said
+            """
+        ),
+        {"uid": user_id, "ai_action": ActionType.AGENT_MESSAGE.name},
+    )
+    return bool(said.scalar())
 
 
 @router.post("/reset")
@@ -153,7 +206,13 @@ async def submit_task(
         submission = TaskSubmission(user_id=user.id)
         db.add(submission)
 
-    submission.task1_search = req.task1_search
+    # 「搜索景点」达标判定见 AI_SEARCH_GROUPS 处注释：
+    #   手动检索由前端上报；AI 对话由服务端日志判定，仅对配置了 AI 助手的组生效。
+    ai_search_satisfied = False
+    if _group_supports_ai(user):
+        ai_search_satisfied = await _has_talked_to_ai(db, user.id)
+
+    submission.task1_search = req.task1_search or ai_search_satisfied
     submission.task2_document = req.task2_document
     submission.task3_reminder = req.task3_reminder
     submission.task4_email = req.task4_email
@@ -167,7 +226,12 @@ async def submit_task(
         duration = (user.task_end_time - user.task_start_time).total_seconds() * 1000
         submission.duration_ms = int(duration)
 
-    all_completed = all([req.task1_search, req.task2_document, req.task3_reminder, req.task4_email])
+    all_completed = all([
+        submission.task1_search,
+        req.task2_document,
+        req.task3_reminder,
+        req.task4_email,
+    ])
     await db.commit()
 
     return TaskSubmitResponse(
@@ -184,10 +248,18 @@ async def get_task_status(user: User = Depends(get_current_user), db: AsyncSessi
     result = await db.execute(select(TaskSubmission).where(TaskSubmission.user_id == user.id))
     submission = result.scalar_one_or_none()
 
+    # ai_chat_started：服务端记录的「已与 AI 助手对话」事实，供前端渲染进度条。
+    # 独立于 submission.task1_search 返回，因为后者只在提交时落库一次，
+    # 而参与者需要在对话后立刻看到「搜索景点」打勾。
+    ai_chat_started = False
+    if _group_supports_ai(user):
+        ai_chat_started = await _has_talked_to_ai(db, user.id)
+
     return {
         "status": user.status.value,
         "task_start_time": user.task_start_time.isoformat() if user.task_start_time else None,
         "task_end_time": user.task_end_time.isoformat() if user.task_end_time else None,
+        "ai_chat_started": ai_chat_started,
         "submission": {
             "task1_search": submission.task1_search if submission else False,
             "task2_document": submission.task2_document if submission else False,

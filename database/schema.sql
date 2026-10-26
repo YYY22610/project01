@@ -91,16 +91,21 @@ CREATE TABLE IF NOT EXISTS chat_messages (
 );
 
 -- Questionnaire items table
+-- 2026-10-14 版：前置问卷与后置问卷统一存于此表，用 phase 区分。
+-- 建库新环境时直接按此 DDL 建即可；已有环境请执行 migrate_questionnaire_v2.sql。
 CREATE TABLE IF NOT EXISTS questionnaire_items (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    construct VARCHAR(20) NOT NULL,
+    construct VARCHAR(64) NOT NULL,
     question_text TEXT NOT NULL,
-    question_type VARCHAR(20) DEFAULT 'likert',
-    options JSONB,
+    question_type VARCHAR(20) DEFAULT 'likert',   -- likert | multiple | choice | text
+    options JSONB,                                -- 单选/多选为字符串数组；双极量表为 {left,right}
     scale_level INTEGER DEFAULT 5,
     sort_order INTEGER DEFAULT 0,
     is_active BOOLEAN DEFAULT TRUE,
-    applicable_groups VARCHAR(20),
+    applicable_groups VARCHAR(20),                -- 一律 'ALL'（新问卷统一措辞，靠指导语做单盲）
+    phase VARCHAR(10) NOT NULL DEFAULT 'post',    -- pre = 前置问卷 | post = 后置问卷
+    is_reverse BOOLEAN NOT NULL DEFAULT FALSE,    -- 反向计分，导出聚合时按 scale+1-x 翻转
+    section_note TEXT,                            -- 题组指导语，渲染为题干上方提示
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
@@ -109,9 +114,11 @@ CREATE TABLE IF NOT EXISTS questionnaire_responses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     item_id UUID NOT NULL REFERENCES questionnaire_items(id) ON DELETE CASCADE,
-    response_value TEXT NOT NULL,
+    response_value TEXT NOT NULL,                 -- 多选题以 ' | ' 连接多个选项
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
+
+CREATE INDEX IF NOT EXISTS idx_questionnaire_items_phase ON questionnaire_items (phase, sort_order);
 
 -- Admin scores table (8-factor, 100-point scheme, GB/T 18972-2017 derived)
 CREATE TABLE IF NOT EXISTS admin_scores (

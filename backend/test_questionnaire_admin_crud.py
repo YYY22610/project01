@@ -37,16 +37,18 @@ async def run():
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # 1. Create
         create_res = await client.post("/api/admin/questionnaire-config", json={
-            "construct": "usefulness",
+            "construct": "perceived_risk",
             "text": "test01",
             "type": "likert5",
             "options": None,
+            "phase": "post",
         }, headers=headers)
         assert create_res.status_code == 200, f"Create failed: {create_res.status_code} {create_res.text}"
         created = create_res.json()
         item_id = created["id"]
         assert created["text"] == "test01"
         assert created["type"] == "likert5"
+        assert created["phase"] == "post"
         print(f"[OK] CREATE id={item_id}")
 
         # 2. List
@@ -58,28 +60,39 @@ async def run():
 
         # 3. Update
         update_res = await client.put(f"/api/admin/questionnaire-config/{item_id}", json={
-            "construct": "trust",
+            "construct": "effort_expectancy",
             "text": "test01 updated",
             "type": "likert7",
         }, headers=headers)
         assert update_res.status_code == 200, f"Update failed: {update_res.status_code} {update_res.text}"
         updated = update_res.json()
-        assert updated["construct"] == "trust"
+        assert updated["construct"] == "effort_expectancy"
         assert updated["text"] == "test01 updated"
         assert updated["type"] == "likert7"
         assert updated["scale_level"] == 7
         print("[OK] UPDATE")
 
-        # 4. Update to choice with options
+        # 4. Update to multiple choice with options
         update2_res = await client.put(f"/api/admin/questionnaire-config/{item_id}", json={
-            "type": "single_choice",
+            "type": "multiple_choice",
             "options": ["A", "B", "C"],
         }, headers=headers)
         assert update2_res.status_code == 200, f"Update2 failed: {update2_res.status_code} {update2_res.text}"
         updated2 = update2_res.json()
-        assert updated2["type"] == "single_choice"
+        assert updated2["type"] == "multiple_choice"
         assert updated2["options"] == ["A", "B", "C"]
-        print("[OK] UPDATE to choice")
+        print("[OK] UPDATE to multiple_choice")
+
+        # 4b. Update to bipolar scale — anchors must survive the round-trip
+        update3_res = await client.put(f"/api/admin/questionnaire-config/{item_id}", json={
+            "type": "bipolar5",
+            "options": {"left": "忧郁", "right": "满足"},
+        }, headers=headers)
+        assert update3_res.status_code == 200, f"Update3 failed: {update3_res.status_code} {update3_res.text}"
+        updated3 = update3_res.json()
+        assert updated3["type"] == "bipolar5"
+        assert updated3["options"] == {"left": "忧郁", "right": "满足"}
+        print("[OK] UPDATE to bipolar5 with anchors")
 
         # 5. Delete
         del_res = await client.delete(f"/api/admin/questionnaire-config/{item_id}", headers=headers)

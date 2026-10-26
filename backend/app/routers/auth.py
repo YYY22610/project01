@@ -24,30 +24,44 @@ from app.config import settings
 router = APIRouter()
 
 
-# 年龄段 → 整数中位数（用于 User.age 兼容旧字段）
-_AGE_RANGE_TO_INT = {
-    "18-24": 21,
-    "25-34": 30,
-    "35-44": 40,
-    "45-54": 50,
-    "55-64": 60,
-    "65+": 70,
-}
+# 前置问卷（phase=pre）的 sort_order 布局 —— 与 seed_service.PRE_QUESTIONS 严格对应。
+# 用 sort_order（而非 construct）定位人口学题，是因为 Q01~Q05 同属 demographic
+# 构念、需要合并成一个表头显示，若按构念定位会互相覆盖。
+# ⚠️ 若在管理后台重排前置问卷顺序，需同步修改这三个常量。
+PRE_ORDER_GENDER = 1      # Q01 您的性别
+PRE_ORDER_AGE = 2         # Q02 您的年龄
+PRE_ORDER_EDUCATION = 3   # Q03 您的最高学历
+PRE_ORDER_GENAI = 6       # Q06 是否使用过生成式人工智能
+PRE_ORDER_LLM_FREQ = 8    # Q08 过去 6 个月使用大语言模型的频率
 
-# LLM 使用频率 → 旧字段 tech_frequency 映射
-_FREQ_TO_TECH = {
-    "never": "rarely",
-    "rarely": "rarely",        # 不常使用（每月 1-2 次）
-    "sometimes": "sometimes",  # 偶尔使用（每周 1-3 次）
-    "often": "often",          # 频繁使用（每周 4-6 次）
-    "daily": "daily",          # 几乎每天使用
+# 年龄段 → 整数中位数（用于 User.age 兼容旧导出列）
+_AGE_VALUES = {
+    "18–25 岁": 21,
+    "26–30 岁": 28,
+    "31–40 岁": 35,
+    "41–50 岁": 45,
+    "50 岁以上": 55,
 }
 
 # 是否使用过生成式 AI → 旧字段 ai_experience 映射
 _AI_EXP = {
-    "yes": "basic",            # 默认认为"使用过"=有基础经验
-    "no": "none",
+    "是": "basic",   # 使用过 → 视为有基础经验
+    "否": "none",
 }
+
+
+def _split_multi(raw: str) -> list[str]:
+    """Split a multi-choice answer. Separator must match what the frontend writes."""
+    return [p.strip() for p in raw.split("|") if p.strip()]
+
+
+def _first_choice(raw) -> str | None:
+    """First selected option of a single- or multi-choice answer, else None."""
+    if raw is None:
+        return None
+    parts = [p.strip() for p in str(raw).split("|") if p.strip()]
+    return parts[0] if parts else None
+
 
 
 @router.post("/register", response_model=TokenResponse)
@@ -110,43 +124,48 @@ async def sign_consent_with_survey(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    """签署知情同意 + 提交前置问卷（10 题） → 触发分组（单盲）。
+    """签署知情同意 + 提交前置问卷（phase=pre） → 触发分组（单盲）。
 
-    - 校验 10 题答案已填齐
-    - 将原始答案存到 users.pre_survey (JSONB)
-    - 同时把人口学（性别/年龄/学历）+ AI 经验映射到旧字段（兼容旧统计/管理后台）
+    - 前置问卷题目全部来自 questionnaire_items（phase='pre'），前端 GET
+      /api/questionnaire/items?phase=pre 拉取，本接口只负责落库
+    - 答案写入 questionnaire_responses（与后置问卷同一张表），便于统一导出
+    - 同时把人口学（性别/年龄/学历）+ AI 经验映射到 users 旧列，
+      供管理后台与既有导出列（Age/Gender/Education/Tech_Frequency/AI_Experience）继续读取
     - 状态机：REGISTERED → CONSENTED；分配实验分组（单盲）
     - 返回含新 group 的 JWT
     """
     if not req.agreed:
         raise HTTPException(status_code=400, detail="请先勾选「我已阅读并同意」")
 
-    s = req.survey
-    # 多选 q4 至少 1 项；若选"以上均不认同"则只允许单独选它
-    if not s.q4 or (len(s.q4) > 1 and "none" in s.q4):
-        raise HTTPException(status_code=400, detail="第 4 题选项无效（多选至少 1 项）")
+    if user.status != UserStatus.REGISTERED:
+        raise HTTPException(status_code=400, detail="当前状态无需重复签署知情同意")
 
-    # 存原始 10 题答案
+    from app.routers.questionnaire import write_responses
+
+    written = await write_responses(db, user, req.responses, expected_phase="pre")
+
+    # 人口学/AI 经验 → users 旧列（导出列仍读这些字段，保持向后兼容）
+    answers = {item.sort_order: value for item, value in written}
     user.pre_survey = {
-        "q1_used_gen_ai": s.q1,
-        "q2_travel_experience": s.q2,
-        "q3_llm_frequency_6m": s.q3,
-        "q4_agent_awareness": s.q4,
-        "q5_llm_duration": s.q5,
-        "q6_gender": s.q6,
-        "q7_age_range": s.q7,
-        "q8_education": s.q8,
-        "q9_marital": s.q9,
-        "q10_occupation": s.q10,
+        **{f"q{order:02d}": value for order, value in sorted(answers.items())},
         "submitted_at": datetime.now(timezone.utc).isoformat(),
     }
 
-    # 映射到旧字段（向后兼容：管理后台/统计脚本可能仍读这些列）
-    user.gender = s.q6
-    user.age = _AGE_RANGE_TO_INT.get(s.q7)
-    user.education = s.q8
-    user.tech_frequency = _FREQ_TO_TECH.get(s.q3, s.q3)
-    user.ai_experience = _AI_EXP.get(s.q1, s.q1)
+    gender = _first_choice(answers.get(PRE_ORDER_GENDER))
+    if gender:
+        user.gender = gender
+    age_val = _AGE_VALUES.get(_first_choice(answers.get(PRE_ORDER_AGE)) or "")
+    if age_val is not None:
+        user.age = age_val
+    education = _first_choice(answers.get(PRE_ORDER_EDUCATION))
+    if education:
+        user.education = education
+    freq = _first_choice(answers.get(PRE_ORDER_LLM_FREQ))
+    if freq:
+        user.tech_frequency = freq
+    genai = _first_choice(answers.get(PRE_ORDER_GENAI))
+    if genai:
+        user.ai_experience = _AI_EXP.get(genai, genai)
 
     # 状态机迁移 + 分组
     user = await transition_status(db, user, UserStatus.CONSENTED)

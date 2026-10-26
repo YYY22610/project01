@@ -38,13 +38,42 @@ export default function Task() {
 
   const [activeSubTab, setActiveSubTab] = useState<SubTabKey>('overview')
   const [leftTab, setLeftTab] = useState<LeftTabKey>('ai')
-  // 完成"搜索景点"任务的两种触发方式：
-  //   1) 用户已与 AI 助手有过对话（chatStore.hasUsedAI + 直接检查 messages，双保险）
-  //   2) 用户在搜索引擎中执行了搜索（searchTriggered）
+
+  // 从 JWT 同步初始化分组信息，避免首屏 showAI 为 false（尚未判定）时
+  // 把默认 leftTab 通过下方兜底 effect 强制改回「搜索引擎」
+  const getGroupFromToken = (): string | null => {
+    try {
+      const token = localStorage.getItem('access_token')
+      if (!token) return null
+      const payload = JSON.parse(atob(token.split('.')[1]))
+      return payload.group || null
+    } catch {
+      return null
+    }
+  }
+  const [showAI, setShowAI] = useState(() => {
+    const g = getGroupFromToken()
+    return g === 'MOA' || g === 'SOA'
+  })
+  const [isMOA, setIsMOA] = useState(() => getGroupFromToken() === 'MOA')
+  const [isSOA, setIsSOA] = useState(() => getGroupFromToken() === 'SOA')
+
+  // 「搜索景点」完成的两种方式（详见后端 task.py 的 AI_SEARCH_GROUPS 注释）：
+  //   1) H 组（无 AI 助手）：在搜索引擎中实际执行过检索 → searchTriggered
+  //   2) 有 AI 助手的组：向 AI 助手发出过任意一条消息即算完成
+  //      AI 判定取「本地实时 + 服务端落库」两者之或：
+  //      本地保证发出消息后立刻打勾，服务端保证刷新/换会话后仍然打勾。
   const hasUsedAI = useChatStore((s) => s.hasUsedAI)
   const chatMessages = useChatStore((s) => s.messages)
-  const aiSearchTriggered = hasUsedAI || Object.values(chatMessages).some((arr) => arr && arr.length > 0)
+  const localAIChatStarted = hasUsedAI || Object.values(chatMessages).some((arr) => arr && arr.length > 0)
+  // 服务端判定的对话事实（/task/status 的 ai_chat_started）
+  const serverAIChatStarted = Boolean(taskStatus?.ai_chat_started)
   const [searchTriggered, setSearchTriggered] = useState(false)
+
+  // AI 对话仅在配置了 AI 助手的组计入「搜索景点」；H 组必须走真实检索
+  const aiChatCounts =
+    (isSOA || isMOA || showAI) && (localAIChatStarted || serverAIChatStarted)
+  const searchTaskDone = aiChatCounts || searchTriggered
 
   // 兜底：若本地已有历史聊天记录（升级前数据无 hasUsedAI 标记），挂载时回填标志，
   // 避免"之前问过 AI、升级后刷新仍显示未完成"的情况
@@ -91,25 +120,7 @@ export default function Task() {
   const [planExporting, setPlanExporting] = useState(false)
 
   // SOA 组：左侧 AI 助手栏固定宽度 560px，不再展示方案预览面板
-
-  // 从 JWT 同步初始化分组信息，避免首屏 showAI 为 false（尚未判定）时
-  // 把默认 leftTab 通过下方兜底 effect 强制改回「搜索引擎」
-  const getGroupFromToken = (): string | null => {
-    try {
-      const token = localStorage.getItem('access_token')
-      if (!token) return null
-      const payload = JSON.parse(atob(token.split('.')[1]))
-      return payload.group || null
-    } catch {
-      return null
-    }
-  }
-  const [showAI, setShowAI] = useState(() => {
-    const g = getGroupFromToken()
-    return g === 'MOA' || g === 'SOA'
-  })
-  const [isMOA, setIsMOA] = useState(() => getGroupFromToken() === 'MOA')
-  const [isSOA, setIsSOA] = useState(() => getGroupFromToken() === 'SOA')
+  // （分组相关 state 已上移至组件顶部，供「搜索景点」完成判定使用）
 
   const draftKey = user?.id ? `task_draft_${user.id}` : null
 
@@ -342,7 +353,7 @@ export default function Task() {
     setSubmitting(true)
     try {
       await submitTask({
-        task1_search: aiSearchTriggered || searchTriggered,
+        task1_search: searchTaskDone,
         task2_document: docGenerated,
         task3_reminder: reminderSet,
         task4_email: emailSent,
@@ -358,10 +369,10 @@ export default function Task() {
     }
   }
 
-  const allDone = (aiSearchTriggered || searchTriggered) && docGenerated && reminderSet && emailSent
+  const allDone = searchTaskDone && docGenerated && reminderSet && emailSent
 
   const taskProgress = [
-    { key: 'search', label: '搜索景点', icon: Search, done: aiSearchTriggered || searchTriggered, subTab: 'overview' as SubTabKey },
+    { key: 'search', label: '搜索景点', icon: Search, done: searchTaskDone, subTab: 'overview' as SubTabKey },
     { key: 'doc', label: '生成文档', icon: FileText, done: docGenerated, subTab: 'doc' as SubTabKey },
     { key: 'reminder', label: '设置提醒', icon: Bell, done: reminderSet, subTab: 'reminder' as SubTabKey },
     { key: 'email', label: '发送邮件', icon: Mail, done: emailSent, subTab: 'email' as SubTabKey },

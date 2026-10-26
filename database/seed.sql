@@ -17,27 +17,19 @@ INSERT INTO system_config (key, value, description) VALUES
     ('_admin_seeded', 'false', '管理员是否已初始化')
 ON CONFLICT (key) DO NOTHING;
 
--- Questionnaire items (6 constructs, 15 items)
-INSERT INTO questionnaire_items (construct, question_text, question_type, scale_level, sort_order, options) VALUES
-    -- trust — 感知信任（措辞对 H 组手动工具与 SOA/MOA 组 AI 均适用）
-    ('trust', '我认为任务中所获得的旅行信息（如景点、路线建议）是可靠的', 'likert', 5, 1, NULL),
-    ('trust', '我信任系统/工具为我生成的行程规划建议', 'likert', 5, 2, NULL),
-    ('trust', '我在使用本系统的过程中，感到我的操作与数据是安全、可控的', 'likert', 5, 3, NULL),
-    -- autonomy — 感知自主性
-    ('autonomy', '我能自主决定如何完成任务，而非被系统主导', 'likert', 5, 4, NULL),
-    ('autonomy', '在整个任务过程中，我感到自己对进度有充分的掌控', 'likert', 5, 5, NULL),
-    ('autonomy', '我可以根据自己的想法随时调整完成任务的方式', 'likert', 5, 6, NULL),
-    -- satisfaction — 满意度
-    ('satisfaction', '我对完成旅行规划任务的整体体验感到满意', 'likert', 5, 7, NULL),
-    ('satisfaction', '我满意完成任务过程中所获得支持的响应质量', 'likert', 5, 8, NULL),
-    -- task_load — 任务负荷 (NASA-TLX)
-    ('task_load', '完成旅行规划任务让我感到脑力负荷很大', 'likert', 7, 9, NULL),
-    ('task_load', '我需要在多个工具/步骤之间频繁切换，增加了我的负担', 'likert', 7, 10, NULL),
-    ('task_load', '整体而言，完成本次任务所需的努力程度很高', 'likert', 7, 11, NULL),
-    -- future_use — 未来使用意愿
-    ('future_use', '如果未来有类似的任务，我愿意继续使用本系统/工具', 'likert', 5, 12, NULL),
-    ('future_use', '我会向他人推荐本系统/工具用于旅行规划', 'likert', 5, 13, NULL),
-    -- manipulation_check — 操纵检验
-    ('manipulation_check', '在本次任务中，你是否使用了AI助理来协助完成旅行规划？', 'choice', 0, 14, '["是","否","不确定"]'::jsonb),
-    ('manipulation_check', '你认为本次任务中为你提供辅助的AI助理数量是？', 'choice', 0, 15, '["0个（纯人工）","1个","多个"]'::jsonb)
-ON CONFLICT DO NOTHING;
+-- ⚠️ 问卷题项不要在本文件里 INSERT。
+--
+-- 2026-10-14 版问卷（前置 20 题 + 后置 34 题，依据《附件5 实验阶段问卷》）
+-- 已迁移到应用启动时的 ORM 种子：backend/app/services/seed_service.py
+-- 的 PRE_QUESTIONS / POST_QUESTIONS。理由：
+--   1. 新问卷含多选题、双极量表锚点、反向计分标记、题组指导语，
+--      用 SQL 维护这些字段（JSONB options / is_reverse / section_note）极易出错；
+--   2. 应用启动时自动灌入，不需要人工执行 SQL；
+--   3. 改题只需改 Python 常量，前后端契约（construct / phase）在同一处可见。
+--
+-- 需要重灌问卷时：清空 questionnaire_items（questionnaire_responses 会级联删除），
+-- 然后重启后端即可。
+--
+-- 历史版本此处曾硬编码一份 15 题的旧问卷（trust/autonomy/satisfaction/
+-- task_load/future_use + manipulation_check），已随问卷更新一并移除 ——
+-- 保留它会在建库时产生与新问卷冲突的第二套题目。

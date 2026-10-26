@@ -19,22 +19,7 @@ export interface User {
   education?: string
   tech_frequency?: string
   ai_experience?: string
-  pre_survey?: PreSurvey | null
-}
-
-// 实验前置问卷 10 题（与后端 schemas.auth.PreSurveySubmission 对应）
-export interface PreSurvey {
-  q1_used_gen_ai: string          // yes / no
-  q2_travel_experience: string    // domestic / abroad / both / never
-  q3_llm_frequency_6m: string     // never / rarely / sometimes / often / daily
-  q4_agent_awareness: string[]    // 多选：agent_principle / agent_openclaw / agent_built / agent_deployed / agent_helpful / none
-  q5_llm_duration: string         // lt_1m / m_1_3 / m_3_6 / gte_6m
-  q6_gender: string               // male / female
-  q7_age_range: string            // 18-24 / 25-34 / 35-44 / 45-54 / 55-64 / 65+
-  q8_education: string            // high_school / bachelor / master / phd
-  q9_marital: string              // married / unmarried
-  q10_occupation: string          // student / full_time / part_time / freelance / unemployed / retired / other
-  submitted_at?: string
+  pre_survey?: Record<string, string> | null
 }
 
 export interface TaskConfig {
@@ -50,6 +35,8 @@ export interface TaskStatus {
   status: UserStatus
   task_start_time: string | null
   task_end_time: string | null
+  /** 服务端记录的「已与 AI 助手对话」（仅对配置了 AI 助手的组返回 true） */
+  ai_chat_started?: boolean
   submission: {
     task1_search: boolean
     task2_document: boolean
@@ -80,10 +67,22 @@ export interface QuestionnaireItem {
   id: string
   construct: string
   question_text: string
-  question_type: 'likert' | 'choice' | 'text'
+  // likert = 量表（含双极，锚点见 options）；multiple = 多选；choice = 单选；text = 开放填空
+  question_type: 'likert' | 'choice' | 'multiple' | 'text'
   options?: any
   scale_level: number
   sort_order: number
+  applicable_groups?: string | null
+  phase: 'pre' | 'post'
+  is_reverse: boolean
+  /** 题组指导语，渲染为题干上方的提示段落（仅题组首题有值） */
+  section_note?: string | null
+}
+
+/** 双极量表的左右锚点（情绪体验构念用） */
+export interface BipolarAnchors {
+  left: string
+  right: string
 }
 
 export interface BehaviorLogEntry {
