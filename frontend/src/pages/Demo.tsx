@@ -64,6 +64,11 @@ export default function Demo() {
     if (!confirmed) return
     const watchSeconds = Math.max(1, Math.round((Date.now() - startTimeRef.current) / 1000))
     try {
+      // 已在任务中（中途离开后重新登录）：不再重复走演示与开始流程，直接回到任务页
+      if (user?.status === 'task_in_progress') {
+        navigate('/task')
+        return
+      }
       if (user?.status === 'consented') {
         await completeDemo(watchSeconds)
       }

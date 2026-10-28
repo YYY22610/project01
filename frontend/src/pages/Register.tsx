@@ -2,6 +2,17 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useUserStore } from '../stores/userStore'
 
+// 各实验状态对应的落地页：登录后按状态分流，避免把已在任务中的被试
+// 错误地弹回演示页（那里点「开始任务」会因状态已是 task_in_progress 而被拒）
+const STATUS_ROUTE: Record<string, string> = {
+  registered: '/consent',
+  consented: '/demo',
+  demo_completed: '/task',
+  task_in_progress: '/task',
+  task_completed: '/questionnaire',
+  questionnaire_completed: '/complete',
+}
+
 export default function Register() {
   const [isLogin, setIsLogin] = useState(true)
   const [email, setEmail] = useState('')
@@ -23,13 +34,16 @@ export default function Register() {
       if (isLogin) {
         // 邮箱直登（实验平台免密登录）
         await loginByEmail(email)
-        // 登录后根据当前实验状态跳转：registered → /consent（新合并页），其他 → 继续后续流程
+        // 登录后按实验状态分流到对应环节：
+        //   registered          → /consent     （新被试，先签知情同意）
+        //   consented           → /demo        （已同意，看演示）
+        //   demo_completed      → /task        （演示已完成，未点开始）
+        //   task_in_progress    → /task        （任务进行中，继续之前的任务）
+        //   task_completed      → /questionnaire（已提交任务，做后置问卷）
+        //   questionnaire_completed → /complete （问卷已完成，展示完成页）
         const status = useUserStore.getState().user?.status
-        if (status === 'registered') {
-          navigate('/consent')
-        } else {
-          navigate('/demo')
-        }
+        const target = STATUS_ROUTE[status ?? 'registered'] ?? '/demo'
+        navigate(target)
       } else {
         // 注册：仅邮箱（基本信息将在「知情同意」页统一收集）
         await register(email)

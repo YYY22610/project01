@@ -165,7 +165,25 @@ async def complete_demo(
 
 @router.post("/start", response_model=TaskStartResponse)
 async def start_task(user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
-    """Start the task — transitions user to task_in_progress."""
+    """Start the task — transitions user to task_in_progress.
+
+    幂等：若被试中途关闭页面后重新登录，状态已是 task_in_progress，
+    直接返回既有任务信息，不再报错（否则被试会被困在演示页无法继续）。
+    """
+    # 已在任务中：补建缺失的提交记录后直接返回
+    if user.status == UserStatus.TASK_IN_PROGRESS:
+        result = await db.execute(select(TaskSubmission).where(TaskSubmission.user_id == user.id))
+        submission = result.scalar_one_or_none()
+        if not submission:
+            submission = TaskSubmission(user_id=user.id)
+            db.add(submission)
+            await db.commit()
+        return TaskStartResponse(
+            task_id=str(submission.id),
+            started_at=user.task_start_time,
+            deadline=user.task_start_time,  # No hard deadline in this experiment
+        )
+
     if user.status != UserStatus.DEMO_COMPLETED:
         raise HTTPException(status_code=400, detail="请先完成演示环节")
 
